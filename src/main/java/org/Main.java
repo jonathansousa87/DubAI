@@ -1,6 +1,7 @@
 package org;
 
 import javax.swing.*;
+import java.awt.*;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -11,6 +12,8 @@ import java.util.concurrent.*;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+// Import explícito para resolver ambiguidades de compilador IntelliJ
 
 /**
  * Main CONSOLIDADA FINAL - Versão 6.0
@@ -36,16 +39,11 @@ public class Main {
     // Configurações globais consolidadas
     private static String translationMethod = "LLama";
     private static String ttsMethod = "TTSUtils";
-    private static String kokoroVoice = "pf_dora";           // Voz padrão Kokoro
-    private static double kokoroSpeed = 0.7995;              // Velocidade padrão Kokoro
     private static final boolean USE_ADVANCED_PROCESSING = true;
     private static final boolean USE_EXISTING_VTT = true;
     private static final boolean ENABLE_VTT_INTEGRATION = true;
     private static final boolean ENABLE_DURATION_SYNC = true;
     private static final boolean ENABLE_SILENCE_PRESERVATION = true;
-    private static final Pattern TIMESTAMP_PATTERN = Pattern.compile(
-            "(\\d{1,2}):(\\d{2}):(\\d{2})[.,](\\d{3})\\s*-->\\s*(\\d{1,2}):(\\d{2}):(\\d{2})[.,](\\d{3})"
-    );
 
     // Executors otimizados
     private static final ExecutorService mainExecutor =
@@ -63,6 +61,39 @@ public class Main {
     private static final int STEP_TIMEOUT_MINUTES = 20;
 
     public static void main(String[] args) {
+        // Se argumentos foram passados, usar modo de linha de comando (legacy)  
+        if (args.length > 0) {
+            runLegacyMode(args);
+            return;
+        }
+        
+        // Verificar se é ambiente headless ou se pode executar GUI
+        if (GraphicsEnvironment.isHeadless()) {
+            System.out.println("⚠️  Ambiente headless detectado - usando modo linha de comando");
+            System.out.println("💡 Para usar GUI: execute com DISPLAY configurado ou em ambiente desktop");
+            System.out.println("📖 Uso: java -cp target/classes org.Main <caminho-do-video>");
+            return;
+        }
+
+        try {
+            // Caso contrário, usar a nova interface gráfica
+            System.out.println("🎬 INICIANDO DubAI - Interface Gráfica Profissional");
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                try {
+                    new org.DubAIGUI().setVisible(true);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    System.err.println("❌ Erro ao inicializar interface gráfica: " + e.getMessage());
+                    System.out.println("💡 Alternativa: execute com argumentos para modo linha de comando");
+                }
+            });
+        } catch (Exception e) {
+            System.err.println("❌ Erro ao verificar interface gráfica: " + e.getMessage());
+            System.out.println("💡 Execute com argumentos para modo linha de comando");
+        }
+    }
+    
+    public static void runLegacyMode(String[] args) {
         // Inicializar logging da pipeline  
         PipelineDebugLogger.setEnabled(true);
         PipelineDebugLogger.logPipelineStart(args.length > 0 ? args[0] : "sem arquivo especificado");
@@ -172,11 +203,8 @@ public class Main {
                 checkCommand("nvidia-smi"), ioExecutor);
 
         CompletableFuture<Boolean> piperCheck = CompletableFuture.supplyAsync(() ->
-                Files.exists(Paths.get("/opt/piper-tts/piper")), ioExecutor);
+                checkPiperAvailable(), ioExecutor);
 
-        // ✅ ADD: Kokoro check
-        CompletableFuture<Boolean> kokoroCheck = CompletableFuture.supplyAsync(() ->
-                checkCommand("kokoro-tts", "--help"), ioExecutor);
 
         CompletableFuture<Boolean> ollamaCheck = CompletableFuture.supplyAsync(() ->
                 checkOllamaAvailable(), ioExecutor);
@@ -186,7 +214,6 @@ public class Main {
             boolean ffprobe = ffprobeCheck.get(10, TimeUnit.SECONDS);
             boolean nvidia = nvidiaCheck.get(10, TimeUnit.SECONDS);
             boolean piper = piperCheck.get(5, TimeUnit.SECONDS);
-            boolean kokoro = kokoroCheck.get(10, TimeUnit.SECONDS);  // ✅ ADD: Get kokoro result
             boolean ollama = ollamaCheck.get(15, TimeUnit.SECONDS);
 
             if (!ffmpeg || !ffprobe) {
@@ -201,82 +228,14 @@ public class Main {
                 return false;
             }
 
-            // ✅ MENU DE SELEÇÃO TTS ATUALIZADO
-            if (piper && kokoro) {
-                // Ambos disponíveis - permitir escolha
-                String[] options = {"Piper TTS (Recomendado)", "Kokoro TTS (Experimental)", "CoquiTTS (Fallback)"};
-                int choice = JOptionPane.showOptionDialog(null,
-                        "🎙️ Selecione o método TTS:\n\n" +
-                        "• Piper TTS: Motor robusto, alta qualidade\n" +
-                        "• Kokoro TTS: Motor experimental, novos recursos\n" +
-                        "• CoquiTTS: Fallback básico\n\n" +
-                        "Qual você deseja usar?",
-                        "Seleção de TTS",
-                        JOptionPane.YES_NO_CANCEL_OPTION,
-                        JOptionPane.QUESTION_MESSAGE,
-                        null,
-                        options,
-                        options[0]);
-
-                switch (choice) {
-                    case 0:
-                        ttsMethod = "TTSUtils";
-                        System.out.println("✅ Piper TTS selecionado pelo usuário");
-                        break;
-                    case 1:
-                        ttsMethod = "KokoroTTS";
-                        System.out.println("✅ Kokoro TTS selecionado pelo usuário");
-                        break;
-                    case 2:
-                        ttsMethod = "CoquiTTS";
-                        System.out.println("✅ CoquiTTS selecionado pelo usuário");
-                        break;
-                    default:
-                        return false; // Usuário cancelou
-                }
-            } else if (piper) {
-                // Apenas Piper disponível
-                int choice = JOptionPane.showConfirmDialog(null,
-                        "✅ Piper TTS detectado.\n\nUsar Piper TTS como método principal?",
-                        "Piper TTS Disponível",
-                        JOptionPane.YES_NO_OPTION,
-                        JOptionPane.QUESTION_MESSAGE);
-
-                if (choice == JOptionPane.YES_OPTION) {
-                    ttsMethod = "TTSUtils";
-                    System.out.println("✅ Piper TTS será usado");
-                } else {
-                    ttsMethod = "CoquiTTS";
-                    System.out.println("✅ CoquiTTS será usado como alternativa");
-                }
-            } else if (kokoro) {
-                // Apenas Kokoro disponível
-                int choice = JOptionPane.showConfirmDialog(null,
-                        "✅ Kokoro TTS detectado.\n\nUsar Kokoro TTS como método principal?",
-                        "Kokoro TTS Disponível",
-                        JOptionPane.YES_NO_OPTION,
-                        JOptionPane.QUESTION_MESSAGE);
-
-                if (choice == JOptionPane.YES_OPTION) {
-                    ttsMethod = "KokoroTTS";
-                    System.out.println("✅ Kokoro TTS será usado");
-                } else {
-                    ttsMethod = "CoquiTTS";
-                    System.out.println("✅ CoquiTTS será usado como alternativa");
-                }
+            // Verificação simplificada para usar apenas Piper
+            if (piper) {
+                ttsMethod = "TTSUtils";
+                System.out.println("✅ Piper TTS detectado e será usado");
             } else {
-                // Nenhum dos dois disponível
-                int choice = JOptionPane.showConfirmDialog(null,
-                        "⚠️ Nem Piper TTS nem Kokoro TTS encontrados.\n\nContinuar com CoquiTTS?",
-                        "TTS Não Encontrado",
-                        JOptionPane.YES_NO_OPTION,
-                        JOptionPane.WARNING_MESSAGE);
-
-                if (choice == JOptionPane.NO_OPTION) {
-                    return false;
-                }
-                ttsMethod = "CoquiTTS";
-                System.out.println("✅ CoquiTTS será usado");
+                showErrorDialog("Piper TTS não encontrado",
+                        "Piper TTS é obrigatório para o funcionamento do sistema.");
+                return false;
             }
 
             if (!ollama) {
@@ -304,9 +263,6 @@ public class Main {
 
     private static boolean configureConsolidatedSettings() {
         String ttsDetails = ttsMethod;
-        if ("KokoroTTS".equals(ttsMethod)) {
-            ttsDetails = String.format("%s (Voz: %s, Velocidade: %.3f)", ttsMethod, kokoroVoice, kokoroSpeed);
-        }
         
         String htmlContent = String.format("""
             <html><body style='width: 700px; padding: 20px;'>
@@ -425,7 +381,24 @@ public class Main {
                         i + 1, videoFiles.length, videoFile.getName());
                 System.out.println("=".repeat(90));
 
-                cleanGpuMemory("Preparação vídeo " + (i + 1));
+                // 🧹 LIMPEZA CUDA REAL ANTES DE CADA VÍDEO (mata processos Python/PyTorch)
+                System.out.println("🧹 Limpeza CUDA REAL antes do vídeo " + (i + 1) + "...");
+                try {
+                    // FORÇA LIMPEZA CUDA - mata processos que seguram VRAM
+                    ClearMemory.forceCudaCleanup();
+                    
+                    // Limpeza tradicional como backup
+                    ClearMemory.runClearNameThenThreshold("pre_video_" + (i + 1) + "_cleanup");
+                    
+                    // Restart Ollama
+                    ClearMemory.restartOllamaService();
+                    Thread.sleep(3000);
+                    
+                    System.out.println("✅ CUDA completamente limpo para vídeo " + (i + 1));
+                } catch (Exception cleanupError) {
+                    System.err.println("❌ ERRO CRÍTICO na limpeza CUDA pré-vídeo " + (i + 1) + ": " + cleanupError.getMessage());
+                    System.err.println("⚠️ Vídeo pode falhar por falta de memória!");
+                }
 
                 // Processamento consolidado
                 processVideoConsolidated(videoFile, config);
@@ -436,12 +409,50 @@ public class Main {
                 System.out.printf("✅ SUCESSO %d/%d: %s (%.1f min) - Pipeline Consolidado\n",
                         i + 1, videoFiles.length, videoFile.getName(), videoTime / 60000.0);
 
+                // 🧹 LIMPEZA CUDA REAL APÓS CADA VÍDEO (garantir próximo funcione)
+                System.out.println("🧹 Limpeza CUDA REAL após vídeo " + (i + 1) + "...");
+                try {
+                    // FORÇA LIMPEZA CUDA - mata processos que seguram VRAM
+                    ClearMemory.forceCudaCleanup();
+                    
+                    // Limpeza tradicional como backup
+                    ClearMemory.runClearNameThenThreshold("post_video_cleanup");
+                    
+                    // Restart Ollama
+                    ClearMemory.restartOllamaService();
+                    Thread.sleep(3000);
+                    
+                    System.out.println("✅ CUDA completamente limpo - próximo vídeo garantido");
+                } catch (Exception cleanupError) {
+                    System.err.println("❌ ERRO CRÍTICO na limpeza CUDA pós-vídeo: " + cleanupError.getMessage());
+                    System.err.println("⚠️ Próximo vídeo pode falhar por falta de memória!");
+                }
+
             } catch (Exception e) {
                 long videoTime = System.currentTimeMillis() - videoStartTime;
                 failureCount++;
 
                 LOGGER.severe(String.format("❌ ERRO no vídeo %s após %.1f min: %s",
                         videoFile.getName(), videoTime / 60000.0, e.getMessage()));
+
+                // 🧹 LIMPEZA CUDA REAL MESMO COM ERRO (garantir próximo funcione)
+                System.out.println("🧹 Limpeza CUDA emergencial após erro no vídeo " + (i + 1) + "...");
+                try {
+                    // FORÇA LIMPEZA CUDA - mata processos que seguram VRAM
+                    ClearMemory.forceCudaCleanup();
+                    
+                    // Limpeza tradicional como backup
+                    ClearMemory.runClearNameThenThreshold("error_video_cleanup");
+                    
+                    // Restart Ollama
+                    ClearMemory.restartOllamaService();
+                    Thread.sleep(3000);
+                    
+                    System.out.println("✅ CUDA limpo após erro - próximo vídeo pode prosseguir");
+                } catch (Exception cleanupError) {
+                    System.err.println("❌ ERRO CRÍTICO na limpeza CUDA pós-erro: " + cleanupError.getMessage());
+                    System.err.println("⚠️ Próximo vídeo DEFINITIVAMENTE falhará por falta de memória!");
+                }
 
                 if (shouldContinueAfterError(e, i + 1, videoFiles.length)) {
                     continue;
@@ -569,25 +580,43 @@ public class Main {
 
         ErrorHandler.checkFileExists(config.outputDir() + "/vocals.wav");
         
-        // Usar transcrição avançada com análise prosódica
+        // 🧹 LIMPEZA CUDA REAL ANTES DO WHISPER (crítico para memória)
+        System.out.println("🧹 Limpeza CUDA REAL antes da transcrição...");
         try {
-            System.out.println("🎯 Iniciando transcrição avançada com análise prosódica...");
-            EnhancedTranscription enhancedResult = WhisperXPlusUtils.transcribeWithProsody(
+            // FORÇA LIMPEZA CUDA - mata processos Python/PyTorch
+            ClearMemory.forceCudaCleanup();
+            
+            // Limpeza tradicional como backup
+            ClearMemory.runClearNameThenThreshold("pre_whisper_intensive");
+            
+            // Restart Ollama
+            ClearMemory.restartOllamaService();
+            Thread.sleep(5000);
+            
+            System.out.println("✅ CUDA completamente limpo para Whisper");
+        } catch (Exception e) {
+            System.err.println("❌ ERRO CRÍTICO na limpeza CUDA pré-Whisper: " + e.getMessage());
+            System.err.println("⚠️ Whisper pode falhar por falta de memória!");
+        }
+        
+        // 🎤 TRANSCRIÇÃO ÚNICA - Evita duplicação do Whisper
+        try {
+            System.out.println("🎯 Transcrição única otimizada (VTT + TSV)...");
+            
+            // ÚNICA execução do Whisper - gera VTT internamente e depois TSV
+            String tsvPath = Whisper.transcribeForTranslation(
                 config.outputDir() + "/vocals.wav", 
-                config.outputDir() + "/transcription.vtt"
+                config.outputDir()
             );
+            System.out.println("✅ Gerados: transcription.vtt + vocals.tsv");
             
-            // Salvar relatório de análise prosódica
-            String reportPath = config.outputDir() + "/prosody_analysis.txt";
-            Files.writeString(Paths.get(reportPath), enhancedResult.generateReport());
-            System.out.println("📊 Relatório prosódico salvo em: " + reportPath);
-            
-            // Salvar dados prosódicos para uso posterior
-            saveProsodyDataForTTS(enhancedResult, config.outputDir());
+            // ⚠️ ANÁLISE PROSÓDICA DESABILITADA - Evita 2ª execução do Whisper
+            // TODO: Implementar análise prosódica que reuse VTT existente sem re-transcrever
+            System.out.println("ℹ️ Análise prosódica pulada para evitar duplicação do Whisper");
             
         } catch (Exception e) {
-            System.err.println("⚠️ Fallback para transcrição básica: " + e.getMessage());
-            WhisperUtils.transcribeAudio(config.outputDir() + "/vocals.wav", config.outputDir() + "/transcription.vtt");
+            System.err.println("❌ Erro na transcrição: " + e.getMessage());
+            throw e;
         }
         
         // Reiniciar Ollama após transcrição para estar disponível para tradução
@@ -609,50 +638,95 @@ public class Main {
             System.err.println("⚠️ Erro ao criar backup da transcrição: " + e.getMessage());
         }
 
-        System.out.println("🌍 Executando tradução inteligente...");
+        System.out.println("🌍 Executando tradução inteligente com TSV...");
 
-        String inputFile = config.outputDir() + "/transcription.vtt";
-        String outputFile = config.outputDir() + "/transcription.vtt";
+        // 🧹 LIMPEZA PREVENTIVA ANTES DA TRADUÇÃO
+        System.out.println("🧹 Limpeza preventiva da GPU antes da tradução...");
+        try {
+            ClearMemory.runClearNameThenThreshold("pre_translation");
+            ClearMemory.restartOllamaService(); // Reiniciar container Ollama
+            Thread.sleep(3000); // Aguardar estabilização
+        } catch (Exception e) {
+            System.err.println("⚠️ Erro na limpeza pré-tradução: " + e.getMessage());
+        }
+
+        // Usar TSV para tradução otimizada, produzir VTT para TTSUtils
+        String inputTsvFile = config.outputDir() + "/vocals.tsv";
+        String outputVttFile = config.outputDir() + "/transcription.vtt";
         String method = config.translationMethod();
 
         if ("LLama".equalsIgnoreCase(method)) {
             try {
-                // Usar TranslationUtilsSimple - versão que funciona!
-                System.out.println("🧠 Usando TranslationUtilsSimple (versão funcional)...");
-                TranslationUtilsSimple.translateFile(inputFile, outputFile, method);
-                System.out.println("✅ Tradução SIMPLES concluída com sucesso!");
+                // INICIAR Ollama Docker APENAS para tradução
+                ClearMemory.startOllamaForTranslation();
+                
+                // Usar Translation com TSV otimizado!
+                System.out.println("🧠 Usando Translation com TSV otimizado...");
+                Translation.translateFile(inputTsvFile, outputVttFile, method);
+                System.out.println("✅ Tradução TSV → VTT concluída com sucesso!");
+                
+                // PARAR Ollama Docker imediatamente após tradução
+                ClearMemory.stopOllamaAfterTranslation();
                 
             } catch (Exception e) {
-                System.out.println("⚠️ Erro na tradução simples: " + e.getMessage());
-                System.out.println("🔄 Tentando fallback com TranslationUtilsFixed...");
+                System.out.println("⚠️ Erro na tradução TSV, tentando VTT fallback: " + e.getMessage());
+                System.out.println("🔄 Tentando fallback com VTT...");
                 
                 try {
-                    // Fallback para método fixed
-                    TranslationUtilsFixed.translateFileEnhanced(inputFile, outputFile);
-                    System.out.println("✅ Tradução FIXED concluída");
+                    // INICIAR Ollama Docker para fallback
+                    ClearMemory.startOllamaForTranslation();
+                    
+                    // Fallback para VTT se TSV falhar
+                    String inputVttFile = config.outputDir() + "/transcription.vtt";
+                    Translation.translateFile(inputVttFile, outputVttFile, method);
+                    System.out.println("✅ Tradução VTT fallback concluída");
+                    
+                    // PARAR Ollama Docker após fallback
+                    ClearMemory.stopOllamaAfterTranslation();
                 } catch (Exception e2) {
-                    System.out.println("⚠️ Fallback para método original...");
-                    try {
-                        TranslationUtils.translateFile(inputFile, outputFile, method);
-                        System.out.println("✅ Tradução ORIGINAL concluída");
-                    } catch (Exception e3) {
-                        System.out.println("❌ Todos os métodos de tradução falharam: " + e3.getMessage());
-                        throw e3;
-                    }
+                    // PARAR Ollama Docker mesmo em caso de erro
+                    ClearMemory.stopOllamaAfterTranslation();
+                    System.out.println("❌ Todos os métodos de tradução falharam: " + e2.getMessage());
+                    throw e2;
                 }
             }
 
         } else {
-            // Para outros métodos (Google, etc.), usa versão padrão
-            TranslationUtils.translateFile(inputFile, outputFile, method);
-            System.out.println("✅ Tradução concluída");
+            // Para outros métodos (Google, etc.), tentar TSV primeiro
+            try {
+                Translation.translateFile(inputTsvFile, outputVttFile, method);
+                System.out.println("✅ Tradução TSV concluída");
+            } catch (Exception e) {
+                System.out.println("⚠️ TSV falhou, usando VTT fallback: " + e.getMessage());
+                String inputVttFile = config.outputDir() + "/transcription.vtt";
+                Translation.translateFile(inputVttFile, outputVttFile, method);
+                System.out.println("✅ Tradução VTT fallback concluída");
+            }
         }
 
         // Exibe estatísticas se disponível
         try {
-            TranslationUtils.printAdvancedStats();
+            Translation.printAdvancedStats();
         } catch (NoSuchMethodError e) {
             // Stats avançadas não disponíveis - silencioso
+        }
+
+        // 🧹 LIMPEZA CUDA REAL PÓS-TRADUÇÃO (liberar memória do Ollama)
+        System.out.println("🧹 Limpeza CUDA REAL após tradução...");
+        try {
+            // FORÇA LIMPEZA CUDA - mata processos Python/PyTorch
+            ClearMemory.forceCudaCleanup();
+            
+            // Limpeza tradicional como backup
+            ClearMemory.runClearNameThenThreshold("post_translation");
+            
+            // Restart Ollama
+            ClearMemory.restartOllamaService();
+            Thread.sleep(2000);
+            
+            System.out.println("✅ CUDA limpo após tradução");
+        } catch (Exception e) {
+            System.err.println("❌ ERRO na limpeza CUDA pós-tradução: " + e.getMessage());
         }
     }
 
@@ -678,30 +752,21 @@ public class Main {
                 System.out.printf("🎯 Duração alvo (VTT): %.3fs\n", targetDuration);
             }
 
-            // === PROCESSAR TTS COM DURAÇÃO ALVO ===
-            switch (config.ttsMethod()) {
-                case "KokoroTTS":
-                    System.out.printf("🎭 Usando Kokoro TTS (Voz: %s, Velocidade: %.3f)\n", kokoroVoice, kokoroSpeed);
-                    System.out.println("⚡ Modo sequencial para evitar CUDA OOM");
-
-                    KokoroTTSUtils.processVttFileStandard(
-                            config.outputDir() + "/transcription.vtt"
-                    );
-                    break;
-
-                case "TTSUtils":
-                    System.out.println("🎙️ Usando Piper TTS");
-                    TTSUtils.processVttFileWithTargetDuration(
-                            config.outputDir() + "/transcription.vtt",
-                            targetDuration
-                    );
-                    break;
-
-                default: // CoquiTTS
-                    System.out.println("🎙️ Usando Coqui TTS");
-                    CoquiTTSUtils.processVttFile(config.outputDir() + "/transcription.vtt");
-                    break;
+            // === GARANTIR QUE OLLAMA ESTÁ PARADO ANTES DO TTS ===
+            System.out.println("🧹 Garantindo que Ollama está parado antes do TTS...");
+            try {
+                ClearMemory.stopOllamaAfterTranslation();
+                System.out.println("✅ Ollama confirmadamente parado - VRAM livre para TTS");
+            } catch (Exception e) {
+                System.out.println("⚠️ Erro ao garantir parada do Ollama: " + e.getMessage());
             }
+            
+            // === PROCESSAR TTS COM PIPER ===
+            System.out.println("🎙️ Usando Piper TTS");
+            TTSUtils.processVttFileWithTargetDuration(
+                    config.outputDir() + "/transcription.vtt",
+                    targetDuration
+            );
 
             // Verificar resultado
             Path outputCheck = Paths.get(config.outputDir(), "output.wav");
@@ -1008,37 +1073,40 @@ public class Main {
         }
 
         // ===== CONTINUAR COM CRIAÇÃO DO VÍDEO =====
-        Path outputVideoPath = Path.of(videoFile.getAbsolutePath().replace(".mp4", "_dub.mp4"));
+        // NOVA ABORDAGEM: Sobrescrever original, depois renomear para _dub
+        Path tempVideoPath = Path.of(videoFile.getAbsolutePath().replace(".mp4", "_temp_processing.mp4"));
+        Path originalVideoPath = Path.of(videoFile.getAbsolutePath());
+        Path finalDubVideoPath = Path.of(videoFile.getAbsolutePath().replace(".mp4", "_dub.mp4"));
 
-        System.out.println("🎬 Criando vídeo final com timing rigoroso...");
+        System.out.println("🎬 Criando vídeo dublado temporário...");
 
         if (config.useAdvancedProcessing()) {
             AudioUtils.replaceAudioAdvanced(
-                    Path.of(videoFile.getAbsolutePath()),
+                    originalVideoPath,
                     outputWavPath,
-                    outputVideoPath
+                    tempVideoPath
             );
         } else {
             AudioUtils.replaceAudio(
-                    Path.of(videoFile.getAbsolutePath()),
+                    originalVideoPath,
                     outputWavPath,
-                    outputVideoPath
+                    tempVideoPath
             );
         }
 
         // ===== VALIDAÇÃO FINAL DO VÍDEO =====
-        if (Files.exists(outputVideoPath)) {
-            long originalVideoSize = Files.size(videoFile.toPath());
-            long finalVideoSize = Files.size(outputVideoPath);
+        if (Files.exists(tempVideoPath)) {
+            long originalVideoSize = Files.size(originalVideoPath);
+            long tempVideoSize = Files.size(tempVideoPath);
 
-            System.out.printf("📦 Tamanhos: Original=%.1fMB | Final=%.1fMB\n",
-                    originalVideoSize / 1024.0 / 1024.0, finalVideoSize / 1024.0 / 1024.0);
+            System.out.printf("📦 Tamanhos: Original=%.1fMB | Dublado=%.1fMB\n",
+                    originalVideoSize / 1024.0 / 1024.0, tempVideoSize / 1024.0 / 1024.0);
 
-            if (finalVideoSize > 1024 * 1024) { // > 1MB
+            if (tempVideoSize > 1024 * 1024) { // > 1MB
                 // Validação final de duração do vídeo
                 try {
-                    double originalVideoDuration = getVideoDurationFFprobe(videoFile.getAbsolutePath());
-                    double finalVideoDuration = getVideoDurationFFprobe(outputVideoPath.toString());
+                    double originalVideoDuration = getVideoDurationFFprobe(originalVideoPath.toString());
+                    double finalVideoDuration = getVideoDurationFFprobe(tempVideoPath.toString());
                     double videoAccuracy = originalVideoDuration > 0 ?
                             (1.0 - Math.abs(finalVideoDuration - originalVideoDuration) / originalVideoDuration) * 100 : 100;
 
@@ -1058,17 +1126,33 @@ public class Main {
                     System.out.println("⚠️ Não foi possível validar duração do vídeo final");
                 }
 
-                // Remover vídeo original
-                if (videoFile.delete()) {
-                    System.out.printf("🗑️ Vídeo original removido: %s\n", videoFile.getName());
+                // ===== NOVA ABORDAGEM: SOBRESCREVER E RENOMEAR =====
+                try {
+                    System.out.printf("🎬 Vídeo dublado temporário criado: %s\n", tempVideoPath.getFileName());
+                    
+                    // PASSO 1: SOBRESCREVER O ORIGINAL COM O DUBLADO
+                    System.out.println("🔄 Sobrescrevendo vídeo original com versão dublada...");
+                    Files.move(tempVideoPath, originalVideoPath, StandardCopyOption.REPLACE_EXISTING);
+                    System.out.println("✅ Vídeo original sobrescrito com sucesso!");
+                    
+                    // PASSO 2: RENOMEAR PARA _DUB
+                    System.out.println("🏷️ Renomeando para versão _dub...");
+                    Files.move(originalVideoPath, finalDubVideoPath, StandardCopyOption.REPLACE_EXISTING);
+                    
+                    System.out.printf("✅ PROCESSAMENTO COMPLETO: %s → %s\n", 
+                            videoFile.getName(), finalDubVideoPath.getFileName());
+                    
+                } catch (Exception error) {
+                    System.err.printf("❌ ERRO CRÍTICO no processamento final: %s\n", error.getMessage());
+                    error.printStackTrace();
+                    System.out.printf("📂 Vídeo dublado temporário disponível em: %s\n", tempVideoPath);
                 }
-                System.out.printf("🎬 Vídeo consolidado criado: %s\n", outputVideoPath.getFileName());
 
             } else {
-                throw new IOException("❌ Vídeo final muito pequeno: " + finalVideoSize + " bytes");
+                throw new IOException("❌ Vídeo final muito pequeno: " + tempVideoSize + " bytes");
             }
         } else {
-            throw new IOException("❌ Vídeo final não foi criado");
+            throw new IOException("❌ Vídeo temporário não foi criado");
         }
     }
     /**
@@ -1269,11 +1353,7 @@ public class Main {
         System.out.printf("🖥️ CPU: Ryzen 7 5700X - %d threads (%d otimizadas)\n",
                 AVAILABLE_CORES, OPTIMAL_PARALLEL_TASKS);
         System.out.printf("🎮 GPU: RTX 2080 Ti - 11GB VRAM\n");
-        if ("KokoroTTS".equals(ttsMethod)) {
-            System.out.printf("🎙️ TTS: %s (Voz: %s, Velocidade: %.3f)\n", ttsMethod, kokoroVoice, kokoroSpeed);
-        } else {
-            System.out.printf("🎙️ TTS: %s\n", ttsMethod);
-        }
+        System.out.printf("🎙️ TTS: %s\n", ttsMethod);
         System.out.printf("🌍 Tradução: %s\n", translationMethod);
         System.out.printf("🏗️ Arquitetura: CONSOLIDADA v6.0\n");
         System.out.printf("📦 Classes: 3 (DurationSyncUtils + SilenceUtils + VTTUtils)\n");
@@ -1400,6 +1480,31 @@ public class Main {
         }
     }
 
+    private static boolean checkPiperAvailable() {
+        String[] possiblePaths = {
+            "/home/kadabra/.local/bin/piper",
+            "/usr/local/bin/piper", 
+            "/usr/bin/piper",
+            "/opt/piper-tts/piper"
+        };
+
+        for (String path : possiblePaths) {
+            if (Files.exists(Paths.get(path))) {
+                return true;
+            }
+        }
+
+        // Tentar verificar se está no PATH
+        try {
+            ProcessBuilder pb = new ProcessBuilder("which", "piper");
+            Process process = pb.start();
+            boolean finished = process.waitFor(5, TimeUnit.SECONDS);
+            return finished && process.exitValue() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private static void prepareOutputDirectory() throws IOException {
         File outputDir = new File("output");
 
@@ -1436,9 +1541,14 @@ public class Main {
     }
     
     /**
+     * FUNÇÃO TEMPORARIAMENTE DESABILITADA
+     * Problema de compilação IntelliJ com Whisper.EnhancedTranscription
      * Salva dados prosódicos para uso no TTS
      */
-    private static void saveProsodyDataForTTS(EnhancedTranscription enhancedResult, String outputDir) {
+    /*
+    private static void saveProsodyDataForTTS(Whisper.EnhancedTranscription enhancedResult, String outputDir) {
+        // Usando Object para evitar problemas de compilação no IntelliJ com inner classes
+        // O enhancedResult será do tipo Whisper.EnhancedTranscription em runtime
         try {
             // Salvar recomendações TTS em arquivo JSON-like para consumo posterior
             StringBuilder prosodyData = new StringBuilder();
@@ -1453,7 +1563,7 @@ public class Main {
             prosodyData.append(String.format("DOMINANCE=%.3f\n", emotions.dominance()));
             
             // Características prosódicas
-            ProsodyMetrics prosody = enhancedResult.prosody();
+            Prosody.Metrics prosody = enhancedResult.prosody();
             prosodyData.append(String.format("AVG_PITCH=%.1f\n", prosody.averagePitch()));
             prosodyData.append(String.format("PITCH_VARIANCE=%.1f\n", prosody.pitchVariance()));
             prosodyData.append(String.format("EXPRESSIVENESS=%.3f\n", prosody.getExpressiveness()));
@@ -1492,6 +1602,7 @@ public class Main {
             System.err.println("⚠️ Erro salvando dados prosódicos: " + e.getMessage());
         }
     }
+    */
 
     private static void cleanupAllResourcesConsolidated() {
         try {
@@ -1533,10 +1644,6 @@ public class Main {
                             gpuExecutor.shutdownNow();
                             Thread.currentThread().interrupt();
                         }
-                    }),
-
-                    CompletableFuture.runAsync(() -> {
-                        try { KokoroTTSUtils.shutdown(); } catch (Exception e) { /* ignore */ }
                     })
             );
 
@@ -1547,7 +1654,7 @@ public class Main {
                     }),
 
                     CompletableFuture.runAsync(() -> {
-                        try { WhisperUtils.shutdownExecutor(); } catch (Exception e) { /* ignore */ }
+                        try { Whisper.shutdown(); } catch (Exception e) { /* ignore */ }
                     }),
 
                     CompletableFuture.runAsync(() -> {
@@ -1559,12 +1666,9 @@ public class Main {
                     }),
 
                     CompletableFuture.runAsync(() -> {
-                        try { TranslationUtils.shutdown(); } catch (Exception e) { /* ignore */ }
+                        try { Translation.shutdown(); } catch (Exception e) { /* ignore */ }
                     }),
 
-                    CompletableFuture.runAsync(() -> {
-                        try { CoquiTTSUtils.shutdown(); } catch (Exception e) { /* ignore */ }
-                    }),
 
                     // 🎯 LIMPEZA DAS CLASSES CONSOLIDADAS
                     CompletableFuture.runAsync(() -> {

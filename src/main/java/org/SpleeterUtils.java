@@ -56,18 +56,13 @@ public class SpleeterUtils {
     }
 
     public static void removeBackgroundMusic(String inputAudio, String outputDir) throws IOException, InterruptedException {
-        // Caminho do python do ambiente virtual que contém spleeter e tensorflow configurados corretamente
-        String pythonPath = "/home/kadabra/.pyenv/versions/3.8.10/envs/spleeter_env/bin/python";
-
         File inputFile = new File(inputAudio);
         if (!inputFile.exists()) {
             throw new IOException("Arquivo de entrada não encontrado: " + inputAudio);
         }
 
-        // REMOVIDO: A criação do diretório aqui (agora é feita antes do processamento paralelo)
-
-        // Comando executando o módulo spleeter via python do ambiente correto
-        String command = String.format("%s -m spleeter separate \"%s\" -o \"%s\"", pythonPath, inputAudio, outputDir);
+        // Comando spleeter atualizado para o novo formato
+        String command = String.format("spleeter separate -o \"%s\" \"%s\"", outputDir, inputAudio);
 
         System.out.println("Executando comando Spleeter: " + command);
         executeCommand(new String[]{"bash", "-c", command}, "Erro ao remover a música de fundo.");

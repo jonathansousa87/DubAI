@@ -1,13 +1,14 @@
 package org;
 
 /**
- * Representa um segmento de silêncio detectado no áudio com classificação de tipo
+ * SilenceSegment - Wrapper de compatibilidade para Silence.Segment
+ * Mantém compatibilidade com código existente
  */
 public record SilenceSegment(
-    double startTime,     // Tempo de início em segundos
-    double endTime,       // Tempo de fim em segundos  
-    double duration,      // Duração em segundos
-    SilenceType type      // Tipo de silêncio classificado
+    double startTime,
+    double endTime, 
+    double duration,
+    SilenceType type
 ) {
     
     public SilenceSegment {
@@ -25,8 +26,28 @@ public record SilenceSegment(
     }
     
     /**
-     * Retorna representação amigável do silêncio
+     * Converte para o novo formato consolidado
      */
+    public Silence.Segment toConsolidated() {
+        return new Silence.Segment(startTime, endTime, duration, 
+                                 Silence.convertLegacyType(type));
+    }
+    
+    /**
+     * Cria a partir do formato consolidado
+     */
+    public static SilenceSegment fromConsolidated(Silence.Segment segment) {
+        SilenceType legacyType = switch (segment.type()) {
+            case INTER_WORD -> SilenceType.INTER_WORD;
+            case PAUSE -> SilenceType.PAUSE;
+            case BREATH -> SilenceType.BREATH;
+            case LONG_PAUSE -> SilenceType.LONG_PAUSE;
+        };
+        
+        return new SilenceSegment(segment.startTime(), segment.endTime(), 
+                                segment.duration(), legacyType);
+    }
+    
     @Override
     public String toString() {
         return String.format("Silence[%.3f-%.3f, %.3fs, %s]", 

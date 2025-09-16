@@ -1,0 +1,17 @@
+WEBVTT
+
+00:10.343 --> 00:11.785
+Tradução não disponível
+
+00:12.346 --> 00:30.595
+Os principais problemas são os links digitados errados, páginas deletadas ou movidas e links quebrados.
+
+00:30.575 --> 00:36.425
+Quando isso acontece, o Next.js exibe automaticamente uma página 404 padrão.
+
+00:37.247 --> 00:40.092
+A página é funcional mas básica e genérica.
+
+00:43.297 --> 00:45.702
+Páginas não encontradas personalizadas
+

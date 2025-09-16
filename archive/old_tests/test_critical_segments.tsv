@@ -1,0 +1,4 @@
+start	end	text
+137798	166708	Then change the flex direction to column we also need to center the items horizontally so we can specify items-center and then we need some spacing between the elements so margin-bottom we are going to open an h1 element with classes text-9xl font-bold and margin-bottom-4.
+200515	215724	So I'm going to add here a paragraph with classes text-lg text-gray-200 and margin-bottom-8 and as content it's going to be sorry the page you are looking for does not exist and after that we need.
+48560	50784	localhost:3000/random-page.

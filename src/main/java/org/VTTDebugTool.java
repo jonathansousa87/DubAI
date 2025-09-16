@@ -16,19 +16,6 @@ public class VTTDebugTool {
             "(\\d{1,2}):(\\d{2}):(\\d{2})[.,](\\d{3})\\s*-->\\s*(\\d{1,2}):(\\d{2}):(\\d{2})[.,](\\d{3})"
     );
 
-    public static void main(String[] args) {
-        // Testa com o arquivo VTT atual
-        String vttPath = "output/transcription.vtt";
-
-        System.out.println("🔍 FERRAMENTA DE DEBUG VTT");
-        System.out.println("==========================================");
-
-        try {
-            analyzeVTTFile(vttPath);
-        } catch (IOException e) {
-            System.err.println("❌ Erro: " + e.getMessage());
-        }
-    }
 
     public static void analyzeVTTFile(String vttFilePath) throws IOException {
         Path vttPath = Paths.get(vttFilePath);
@@ -219,30 +206,4 @@ public class VTTDebugTool {
         }
     }
 
-    /**
-     * Método para corrigir automaticamente um arquivo VTT
-     */
-    public static void autoFixVTT(String inputPath, String outputPath) throws IOException {
-        Path input = Paths.get(inputPath);
-        Path output = Paths.get(outputPath);
-
-        List<String> lines = Files.readAllLines(input);
-
-        System.out.println("🔧 AUTO-CORREÇÃO VTT");
-        System.out.println("Entrada: " + input.getFileName());
-        System.out.println("Saída: " + output.getFileName());
-
-        List<String> correctedLines = lines.stream()
-                .map(line -> {
-                    // Normaliza vírgulas para pontos nos timestamps
-                    if (line.contains("-->")) {
-                        return line.replace(',', '.');
-                    }
-                    return line;
-                })
-                .toList();
-
-        Files.write(output, correctedLines);
-        System.out.println("✅ Arquivo corrigido salvo");
-    }
 }

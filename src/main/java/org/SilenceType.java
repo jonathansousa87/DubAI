@@ -1,32 +1,14 @@
 package org;
 
 /**
- * Classificação dos tipos de silêncio detectados no áudio
+ * SilenceType - Wrapper de compatibilidade para Silence.Type
+ * Mantém compatibilidade com código existente
  */
 public enum SilenceType {
     
-    /**
-     * Silêncio muito curto entre palavras (< 100ms)
-     * Importante para preservar timing natural da fala
-     */
     INTER_WORD("Inter-word pause", 0.05, 0.1),
-    
-    /**
-     * Pausa normal na fala (100ms - 300ms)
-     * Respirações naturais, pontuação
-     */
     PAUSE("Natural pause", 0.1, 0.3),
-    
-    /**
-     * Respiração audível ou hesitação (300ms - 1000ms)
-     * Importante para preservar naturalidade emocional
-     */
     BREATH("Breath/Hesitation", 0.3, 1.0),
-    
-    /**
-     * Pausa longa intencional (> 1000ms)
-     * Mudanças de tópico, dramatic pause
-     */
     LONG_PAUSE("Long pause", 1.0, Double.MAX_VALUE);
     
     private final String description;
@@ -60,19 +42,42 @@ public enum SilenceType {
                 return type;
             }
         }
-        return LONG_PAUSE; // Default para durações muito longas
+        return LONG_PAUSE;
     }
     
     /**
      * Retorna peso de importância para preservação no TTS
-     * Valores maiores = mais importante preservar
      */
     public double getPreservationWeight() {
         return switch (this) {
-            case INTER_WORD -> 0.9;    // Crítico para naturalidade
-            case PAUSE -> 0.7;         // Importante para respiração 
-            case BREATH -> 0.8;        // Importante para emoção
-            case LONG_PAUSE -> 0.6;    // Pode ser ajustado
+            case INTER_WORD -> 0.9;
+            case PAUSE -> 0.7;
+            case BREATH -> 0.8;
+            case LONG_PAUSE -> 0.6;
+        };
+    }
+    
+    /**
+     * Converte para o novo tipo consolidado
+     */
+    public Silence.Type toConsolidated() {
+        return switch (this) {
+            case INTER_WORD -> Silence.Type.INTER_WORD;
+            case PAUSE -> Silence.Type.PAUSE;
+            case BREATH -> Silence.Type.BREATH;
+            case LONG_PAUSE -> Silence.Type.LONG_PAUSE;
+        };
+    }
+    
+    /**
+     * Cria a partir do tipo consolidado
+     */
+    public static SilenceType fromConsolidated(Silence.Type type) {
+        return switch (type) {
+            case INTER_WORD -> INTER_WORD;
+            case PAUSE -> PAUSE;
+            case BREATH -> BREATH;
+            case LONG_PAUSE -> LONG_PAUSE;
         };
     }
 }

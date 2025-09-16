@@ -1,0 +1,10 @@
+WEBVTT
+
+00:10.343 --> 00:11.785
+something
+
+00:12.346 --> 00:30.595
+URLs that are typed wrong, deleted or moved pages and broken links are the main issues.
+
+00:30.575 --> 00:36.425
+When this happens, Next.js automatically shows a default 404 error page.

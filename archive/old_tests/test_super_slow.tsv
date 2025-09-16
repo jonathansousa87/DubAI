@@ -1,0 +1,3 @@
+start	end	text
+1000	3000	This is an extremely long sentence that contains way too many words and should definitely be simplified by Gemini API because it will take much more time to speak than the available timestamp duration allows for proper synchronization.
+5000	6000	Short text.

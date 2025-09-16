@@ -1002,7 +1002,7 @@ public class VTTUtils {
     }
 
     /**
-     * Substitui SilencePipelineIntegration.integrateWithMainPipeline()
+     * Substitui Silence.integrateWithMainPipeline()
      */
     public static void integrateWithMainPipelineCompat(String originalVideoPath, String outputDirectory)
             throws IOException, InterruptedException {
@@ -1010,7 +1010,7 @@ public class VTTUtils {
     }
 
     /**
-     * Substitui SilencePipelineIntegration.enhanceTTSWithSilencePreservation()
+     * Substitui Silence.enhanceExistingTimingUtils()
      */
     public static void enhanceTTSWithSilencePreservation(String vttFile, String outputDir)
             throws IOException, InterruptedException {
@@ -1025,7 +1025,7 @@ public class VTTUtils {
     }
 
     /**
-     * Substitui SilencePipelineIntegration.replaceMainFinalizationStep()
+     * Substitui Silence.integrateWithMainPipeline()
      */
     public static void replaceMainFinalizationStep(Path videoFile, String outputDir, boolean useAdvancedProcessing)
             throws IOException, InterruptedException {
