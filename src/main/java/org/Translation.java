@@ -689,18 +689,13 @@ public class Translation {
         
         for (int i = 0; i < batch.size(); i++) {
             TranscriptionSegment seg = batch.get(i);
-            double availableTimeSeconds = (seg.endMs() - seg.startMs()) / 1000.0;
-            int targetWords = (int) Math.ceil(availableTimeSeconds * PORTUGUESE_SPEAKING_SPEED * 0.85); // 85% para margem
+            double startSeconds = seg.startMs() / 1000.0;
+            double endSeconds = seg.endMs() / 1000.0;
             
-            // Classificar duração para prompt dinâmico
-            String timeHint = "";
-            if (availableTimeSeconds < 2.0) {
-                timeHint = " [SHORT]";
-            } else if (availableTimeSeconds > 8.0) {
-                timeHint = " [LONG]";
-            }
+            // Formato: [1|2.5s-4.8s] Text
+            String timestamp = String.format("[%d|%.1fs-%.1fs]", i + 1, startSeconds, endSeconds);
             
-            sb.append(String.format("[%d] %s%s\n", i + 1, seg.text(), timeHint));
+            sb.append(String.format("%s %s\n", timestamp, seg.text()));
         }
         
         return sb.toString();
@@ -748,14 +743,17 @@ public class Translation {
     private static String buildCleanPrompt(String text) {
         return "Translate to Brazilian Portuguese for synchronized programming course dubbing. " +
                "CRITICAL TIMING RULES:\n" +
-               "- Keep the exact [number] format\n" +
-               "- [SHORT] = Create concise translation (few words, direct)\n" +
-               "- [LONG] = Allow detailed explanation (more words, educational)\n" +
-               "- No timing marker = Standard conversational length\n" +
-               "- Match speaking pace: avoid overly long or short translations\n" +
+               "- Each line has format [number|start-end] followed by English text\n" +
+               "- The timestamp shows EXACTLY how much time you have for that translation\n" +
+               "- Example: [1|2.5s-4.8s] means you have 2.3 seconds for this phrase\n" +
+               "- Adjust translation length to fit the exact time available\n" +
+               "- Short time (< 2s) = Concise, direct translation\n" +
+               "- Medium time (2-6s) = Natural conversational pace\n" +
+               "- Long time (> 6s) = Detailed explanation with educational context\n" +
                "- DO NOT translate technical terms: JavaScript, TypeScript, React, Angular, Next.js, Java, Spring Boot, API, framework, component, props, state, hook, function, class, method, variable, array, object, promise, async, await, import, export, npm, yarn, webpack, etc.\n" +
                "- Use natural Brazilian Portuguese for explanations\n" +
-               "- Keep code examples and file names in original language\n\n" + text;
+               "- Keep code examples and file names in original language\n" +
+               "- Respond with same [number] format but REMOVE the timestamp from your answer\n\n" + text;
     }
     
     private static String buildOllamaPayload(String model, String prompt) {
@@ -940,8 +938,9 @@ public class Translation {
                     int num = Integer.parseInt(line.substring(1, line.indexOf(']')));
                     String text = line.substring(line.indexOf(']') + 1).trim();
                     
-                    // Limpar hints de timing, colchetes, parênteses e comentários da IA
-                    text = text.replaceAll("\\[.*?\\]", "").trim(); // Remove [SHORT], [LONG], etc.
+                    // Limpar timestamps e comentários da IA, mas preservar numeração [1], [2], etc.
+                    text = text.replaceAll("\\[(\\d+)\\|[^\\]]+\\]", "[$1]").trim(); // [1|2.5s-4.8s] → [1]
+                    text = text.replaceAll("\\[(?!\\d+\\])[^\\]]*\\]", "").trim(); // Remove outros [texto] mas mantém [número]
                     text = text.replaceAll("\\(.*?\\)", "").trim(); // Remove (qualquer coisa)
                     text = text.replaceAll("\\*([^*]+)\\*", "$1").trim(); // Remove *palavra* → palavra
                     text = text.replaceAll("\\s*–\\s*[^.]*\\.", "").trim(); // Remove comentários com –
@@ -1192,7 +1191,8 @@ public class Translation {
                 // Limpar resposta (remover possíveis numerações, prefixos e comentários da IA)
                 cleanedResponse = cleanedResponse.replaceAll("^\\[?\\d+\\]?\\.?\\s*", "");
                 cleanedResponse = cleanedResponse.replaceAll("^(Tradução:|Resposta:)\\s*", "");
-                cleanedResponse = cleanedResponse.replaceAll("\\[.*?\\]", "").trim(); // Remove [SHORT], [LONG], etc.
+                cleanedResponse = cleanedResponse.replaceAll("\\[(\\d+)\\|[^\\]]+\\]", "[$1]").trim(); // [1|2.5s-4.8s] → [1]
+                cleanedResponse = cleanedResponse.replaceAll("\\[(?!\\d+\\])[^\\]]*\\]", "").trim(); // Remove outros [texto] mas mantém [número]
                 cleanedResponse = cleanedResponse.replaceAll("\\(.*?\\)", "").trim(); // Remove (qualquer coisa)
                 cleanedResponse = cleanedResponse.replaceAll("\\*([^*]+)\\*", "$1").trim(); // Remove *palavra* → palavra
                 cleanedResponse = cleanedResponse.replaceAll("\\s*–\\s*[^.]*\\.", "").trim(); // Remove comentários com –
@@ -1310,19 +1310,45 @@ public class Translation {
         for (int i = 0; i < segments.size(); i++) {
             TranslatedSegment segment = segments.get(i);
             
+            String translatedText = segment.translatedText();
+            
+            // VERIFICAR SE A TRADUÇÃO FALHOU (texto permanece em inglês)
+            if (isEnglishText(translatedText)) {
+                logger.warning(String.format("🚨 Segmento [%d] não foi traduzido! Tentando traduzir novamente...", i + 1));
+                logger.info(String.format("📝 Texto em inglês: '%s'", translatedText));
+                
+                try {
+                    // Tentar traduzir novamente com Gemma 3
+                    String retranslatedText = retranslateSegmentWithGoogleGemma3(segment.originalText());
+                    if (!retranslatedText.isEmpty() && !isEnglishText(retranslatedText)) {
+                        logger.info(String.format("✅ Re-tradução bem-sucedida [%d]: '%s'", i + 1, 
+                            retranslatedText.length() > 50 ? retranslatedText.substring(0, 50) + "..." : retranslatedText));
+                        translatedText = retranslatedText;
+                        // Atualizar o segmento
+                        segment = new TranslatedSegment(segment.startMs(), segment.endMs(), segment.originalText(), translatedText);
+                    } else {
+                        logger.severe(String.format("❌ Re-tradução falhou [%d], mantendo texto original em inglês", i + 1));
+                    }
+                } catch (Exception e) {
+                    logger.severe(String.format("💀 Erro na re-tradução [%d]: %s", i + 1, e.getMessage()));
+                }
+            }
+            
             // Calcular duração disponível vs necessária
             double availableTimeSeconds = segment.endMs() - segment.startMs();
             availableTimeSeconds = availableTimeSeconds / 1000.0;
-            
-            String translatedText = segment.translatedText();
             int wordCount = countWords(translatedText);
             double requiredTimeSeconds = wordCount / PORTUGUESE_SPEAKING_SPEED;
             
             // Verificar se excede significativamente a tolerância
             double ratio = requiredTimeSeconds / availableTimeSeconds;
             
+            logger.info(String.format("🔍 Segmento [%d]: %d palavras, %.2fs necessário vs %.2fs disponível (ratio: %.2f)", 
+                i + 1, wordCount, requiredTimeSeconds, availableTimeSeconds, ratio));
+            
             // AJUSTAR TEXTO AO TIMESTAMP - SIMPLIFICAR OU ESTENDER
-            if (ratio > 1.1) {
+            // Threshold mais rigoroso para evitar fala corrida/robótica (ajustado para TTS realista)
+            if (ratio > 0.80) {
                 // TEXTO MUITO LONGO - SIMPLIFICAR
                 logger.info(String.format("📏 Segmento [%d] muito longo: %.1fs necessário vs %.1fs disponível (%.1fx)",
                     i + 1, requiredTimeSeconds, availableTimeSeconds, ratio));
@@ -1330,23 +1356,34 @@ public class Translation {
                     translatedText.length() > 50 ? translatedText.substring(0, 50) + "..." : translatedText));
                 
                 try {
-                    String adjustedText = simplifyTextWithGemini(translatedText, availableTimeSeconds);
+                    // Usar Google Gemma 3 configurado para simplificação
+                    String adjustedText;
+                    if (currentMethod == TranslationMethod.GOOGLE_GEMMA_3 && googleApiKey != null) {
+                        adjustedText = simplifyTextWithGoogleGemma3(translatedText, availableTimeSeconds);
+                    } else {
+                        adjustedText = simplifyTextWithGemini(translatedText, availableTimeSeconds);
+                    }
                     
                     if (!adjustedText.isEmpty() && !adjustedText.equals(translatedText)) {
-                        int originalWords = countWords(translatedText);
-                        int adjustedWords = countWords(adjustedText);
+                        // Limpar texto simplificado (remover timestamps e artefatos)
+                        String cleanedText = cleanTranslatedText(adjustedText);
                         
-                        if (adjustedWords < originalWords) {
+                        int originalWords = countWords(translatedText);
+                        int adjustedWords = countWords(cleanedText);
+                        
+                        // Verificar se a simplificação foi realmente efetiva (pelo menos 15% redução)
+                        double reduction = ((double)(originalWords - adjustedWords) / originalWords) * 100;
+                        if (adjustedWords < originalWords && reduction >= 15.0) {
                             validatedSegments.add(new TranslatedSegment(
                                 segment.startMs(), segment.endMs(), 
-                                segment.originalText(), adjustedText
+                                segment.originalText(), cleanedText
                             ));
                             
-                            double improvement = ((double)(originalWords - adjustedWords) / originalWords) * 100;
-                            logger.info(String.format("✅ Simplificado [%d] (-%.1f%% palavras): '%s'", i + 1, improvement,
-                                adjustedText.length() > 50 ? adjustedText.substring(0, 50) + "..." : adjustedText));
+                            logger.info(String.format("✅ Simplificado [%d] (-%.1f%% palavras): '%s'", i + 1, reduction,
+                                cleanedText.length() > 50 ? cleanedText.substring(0, 50) + "..." : cleanedText));
                             simplifiedCount++;
                         } else {
+                            logger.warning(String.format("⚠️ Simplificação insuficiente [%d] (-%.1f%%), mantendo original", i + 1, reduction));
                             validatedSegments.add(segment);
                         }
                     } else {
@@ -1366,7 +1403,13 @@ public class Translation {
                     translatedText.length() > 50 ? translatedText.substring(0, 50) + "..." : translatedText));
                 
                 try {
-                    String extendedText = extendTextWithGemini(translatedText, availableTimeSeconds);
+                    // Usar Google Gemma 3 configurado para extensão
+                    String extendedText;
+                    if (currentMethod == TranslationMethod.GOOGLE_GEMMA_3 && googleApiKey != null) {
+                        extendedText = extendTextWithGoogleGemma3(translatedText, availableTimeSeconds);
+                    } else {
+                        extendedText = extendTextWithGemini(translatedText, availableTimeSeconds);
+                    }
                     
                     if (!extendedText.isEmpty() && !extendedText.equals(translatedText)) {
                         int originalWords = countWords(translatedText);
@@ -1426,22 +1469,54 @@ public class Translation {
     }
     
     /**
-     * Simplifica texto usando Google Gemini API
+     * Simplifica texto usando Google Gemma 3 API configurado
+     */
+    private static String simplifyTextWithGoogleGemma3(String text, double maxTimeSeconds) throws IOException, InterruptedException {
+        int targetWords = (int) Math.ceil(maxTimeSeconds * PORTUGUESE_SPEAKING_SPEED * 0.8);
+        
+        String prompt = String.format(
+            "CRITICAL: Simplify this Portuguese text to fit EXACTLY %.1f seconds (MAX %d words). " +
+            "TIMING IS CRUCIAL - the text is currently TOO LONG and will sound rushed/robotic.\n\n" +
+            "MANDATORY RULES:\n" +
+            "- Must fit exactly %.1f seconds of natural speech (2.5 words per second max)\n" +
+            "- Remove unnecessary words, use shorter synonyms\n" +
+            "- Keep ONLY essential meaning, cut decorative language\n" +
+            "- DO NOT translate: JavaScript, TypeScript, React, Angular, Next.js, Java, Spring Boot, API\n" +
+            "- Result MUST be natural pace for TTS voice synthesis\n" +
+            "- NO explanations, just the simplified text\n\n" +
+            "Original (TOO LONG): %s\n\n" +
+            "Simplified version (EXACTLY %d words or less):",
+            maxTimeSeconds, targetWords, maxTimeSeconds, text, targetWords
+        );
+        
+        try {
+            String response = callGoogleGemmaTranslation(prompt);
+            return response.trim();
+        } catch (Exception e) {
+            logger.warning("❌ Erro simplificando com Google Gemma 3: " + e.getMessage());
+            return text; // Retornar texto original em caso de erro
+        }
+    }
+
+    /**
+     * Simplifica texto usando Google Gemini API (fallback)
      */
     private static String simplifyTextWithGemini(String text, double maxTimeSeconds) throws IOException, InterruptedException {
         int targetWords = (int) Math.ceil(maxTimeSeconds * PORTUGUESE_SPEAKING_SPEED * 0.8); // 80% da capacidade para margem
         
         String prompt = String.format(
-            "Simplify this Portuguese programming course text to fit %.1f seconds (maximum %d words). " +
-            "CRITICAL RULES: " +
-            "- Keep original meaning and technical context " +
-            "- DO NOT translate programming terms: JavaScript, TypeScript, React, Angular, Next.js, Java, Spring Boot, API, component, props, state, function, class, method, variable, array, object, promise, async, await, import, export, npm, yarn, webpack, etc. " +
-            "- Simplify sentence structure, use shorter words, but preserve clarity " +
-            "- NO asterisks or markdown. Result must be natural Brazilian Portuguese " +
-            "- Keep code examples and technical terms in English\n\n" +
-            "Original text: %s\n\n" +
-            "Simplified version:",
-            maxTimeSeconds, targetWords, text
+            "CRITICAL: Simplify this Portuguese text to fit EXACTLY %.1f seconds (MAX %d words). " +
+            "TIMING IS CRUCIAL - the text is currently TOO LONG and will sound rushed/robotic.\n\n" +
+            "MANDATORY RULES:\n" +
+            "- Must fit exactly %.1f seconds of natural speech (2.5 words per second max)\n" +
+            "- Remove unnecessary words, use shorter synonyms\n" +
+            "- Keep ONLY essential meaning, cut decorative language\n" +
+            "- DO NOT translate: JavaScript, TypeScript, React, Angular, Next.js, Java, Spring Boot, API, component, props, state, function, class, method, variable, array, object, promise, async, await, import, export, npm, yarn, webpack\n" +
+            "- Result MUST be natural pace for TTS voice synthesis\n" +
+            "- NO explanations, just the simplified text\n\n" +
+            "Original (TOO LONG): %s\n\n" +
+            "Simplified version (EXACTLY %d words or less):",
+            maxTimeSeconds, targetWords, maxTimeSeconds, text, targetWords
         );
         
         String payload = buildGeminiPayload(prompt);
@@ -1476,7 +1551,35 @@ public class Translation {
     }
     
     /**
-     * Estende texto curto para preencher timestamp com fala natural
+     * Estende texto curto usando Google Gemma 3 API configurado
+     */
+    private static String extendTextWithGoogleGemma3(String text, double maxTimeSeconds) throws IOException, InterruptedException {
+        int targetWords = (int) Math.ceil(maxTimeSeconds * PORTUGUESE_SPEAKING_SPEED * 0.9);
+        
+        String prompt = String.format(
+            "Extend this short Portuguese text to naturally fill %.1f seconds (target %d words). " +
+            "CRITICAL RULES: " +
+            "- Keep original meaning and technical context " +
+            "- DO NOT translate: JavaScript, TypeScript, React, Angular, Next.js, Java, Spring Boot, API\n" +
+            "- Add natural explanatory phrases for educational dubbing " +
+            "- Make it sound conversational and natural for TTS " +
+            "- NO asterisks or markdown. Result must be natural Brazilian Portuguese\n\n" +
+            "Short text: %s\n\n" +
+            "Extended version:",
+            maxTimeSeconds, targetWords, text
+        );
+        
+        try {
+            String response = callGoogleGemmaTranslation(prompt);
+            return response.trim();
+        } catch (Exception e) {
+            logger.warning("❌ Erro estendendo com Google Gemma 3: " + e.getMessage());
+            return text;
+        }
+    }
+
+    /**
+     * Estende texto curto para preencher timestamp com fala natural (fallback)
      */
     private static String extendTextWithGemini(String text, double maxTimeSeconds) throws IOException, InterruptedException {
         int targetWords = (int) Math.ceil(maxTimeSeconds * PORTUGUESE_SPEAKING_SPEED * 0.9); // 90% da capacidade
@@ -1574,9 +1677,10 @@ public class Translation {
                     .replace("\\u003c", "<")
                     .replace("\\u003e", ">");
                 
-                // FALLBACK: Remover asteriscos, colchetes, parênteses e comentários explicativos da IA
+                // FALLBACK: Remover asteriscos, timestamps e comentários explicativos da IA
                 content = content.replaceAll("\\*\\*", "").trim();
-                content = content.replaceAll("\\[.*?\\]", "").trim(); // Remove [SHORT], [LONG], etc.
+                content = content.replaceAll("\\[(\\d+)\\|[^\\]]+\\]", "[$1]").trim(); // [1|2.5s-4.8s] → [1]
+                content = content.replaceAll("\\[(?!\\d+\\])[^\\]]*\\]", "").trim(); // Remove outros [texto] mas mantém [número]
                 content = content.replaceAll("\\(.*?\\)", "").trim(); // Remove (qualquer coisa)
                 content = content.replaceAll("\\*([^*]+)\\*", "$1").trim(); // Remove *palavra* → palavra
                 content = content.replaceAll("\\s*–\\s*[^.]*\\.", "").trim(); // Remove comentários com –
@@ -1589,5 +1693,92 @@ public class Translation {
         }
         
         return "";
+    }
+    
+    /**
+     * Limpa texto traduzido removendo timestamps e artefatos
+     */
+    private static String cleanTranslatedText(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return text;
+        }
+        
+        String cleaned = text.trim();
+        
+        // Remover timestamps com formato [número|timing]
+        cleaned = cleaned.replaceAll("\\[(\\d+)\\|[^\\]]+\\]", "").trim();
+        
+        // Remover apenas números entre colchetes [1] [2] etc
+        cleaned = cleaned.replaceAll("\\[\\d+\\]", "").trim();
+        
+        // Remover asteriscos **texto**
+        cleaned = cleaned.replaceAll("\\*\\*", "").trim();
+        
+        // Remover aspas no início/fim
+        cleaned = cleaned.replaceAll("^[\"']|[\"']$", "").trim();
+        
+        return cleaned;
+    }
+    
+    /**
+     * Detecta se o texto está em inglês (não foi traduzido)
+     */
+    private static boolean isEnglishText(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return false;
+        }
+        
+        // Palavras comuns em inglês que raramente aparecem em português
+        String[] englishIndicators = {
+            " the ", " and ", " for ", " with ", " this ", " that ", " have ", " been ",
+            " will ", " would ", " could ", " should ", " their ", " there ", " where ",
+            " what ", " when ", " which ", " while ", " about ", " after ", " before ",
+            " during ", " between ", " through ", " without ", " within ", " because ",
+            " however ", " therefore ", " although ", " unless ", " since ", " until "
+        };
+        
+        String lowerText = " " + text.toLowerCase() + " ";
+        
+        int englishMatches = 0;
+        for (String indicator : englishIndicators) {
+            if (lowerText.contains(indicator)) {
+                englishMatches++;
+            }
+        }
+        
+        // Se encontrar 2 ou mais indicadores, provavelmente é inglês
+        return englishMatches >= 2;
+    }
+    
+    /**
+     * Re-traduz um segmento individual usando Google Gemma 3
+     */
+    private static String retranslateSegmentWithGoogleGemma3(String englishText) throws IOException, InterruptedException {
+        String prompt = String.format(
+            "Translate this English text to natural Brazilian Portuguese for video dubbing:\n\n" +
+            "\"%s\"\n\n" +
+            "Rules:\n" +
+            "- Natural Brazilian Portuguese\n" +
+            "- Keep technical terms in English if commonly used\n" +
+            "- Maintain the same meaning and tone\n" +
+            "- No explanations, just the translation\n\n" +
+            "Portuguese translation:",
+            englishText
+        );
+        
+        try {
+            String response = callGoogleGemmaTranslation(prompt);
+            
+            // Limpar resposta
+            response = response.trim();
+            response = response.replaceAll("^[\"']|[\"']$", ""); // Remove aspas no início/fim
+            response = response.replaceAll("\\*\\*", "").trim(); // Remove asteriscos
+            
+            return response;
+            
+        } catch (Exception e) {
+            logger.warning("❌ Erro na re-tradução com Google Gemma 3: " + e.getMessage());
+            return "";
+        }
     }
 }

@@ -66,7 +66,8 @@ public class ClearMemory {
 
     // Lista de processos críticos para nunca matar
     private static final String[] PROTECTED_PROCESSES = {
-            "nvidia-smi", "nvidia-persistenced", "Xorg", "gnome", "systemd"
+            "nvidia-smi", "nvidia-persistenced", "Xorg", "gnome", "systemd",
+            "idea", "intellij", "jetbrains", "java.*Main", "DubAIGUI"
     };
 
     private static record ProcessInfo(int pid, String name, int usedMemory, long timestamp) {
