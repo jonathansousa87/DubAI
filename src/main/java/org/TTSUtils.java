@@ -9,9 +9,14 @@ import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Properties;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -398,7 +403,6 @@ public class TTSUtils {
         }
         
         /**
-         * Loop de reprocessamento via Ollama até timing adequado
          */
         static String reprocessUntilAcceptable(String originalText, double vttStartTime, double vttEndTime, 
                                               double tolerance, int maxAttempts) {
@@ -1878,7 +1882,6 @@ public class TTSUtils {
 
     /**
      * 🎯 REPROCESSAMENTO AUTOMÁTICO PARA TIMING INADEQUADO
-     * Identifica e reprocessa segmentos com timing inadequado usando Ollama
      */
     private static void reprocessInadequateTimingSegments(List<OptimizedSegment> segments, 
                                                          OptimizedCalibration calibration) {
@@ -1943,7 +1946,6 @@ public class TTSUtils {
                             logger.warning(String.format("⚠️ Falha no reprocessamento do segmento %d", segment.index));
                         }
                     } else {
-                        logger.info(String.format("ℹ️ Segmento %d: Ollama não conseguiu simplificar adequadamente", segment.index));
                     }
                     
                 } catch (Exception e) {
@@ -2554,6 +2556,680 @@ public class TTSUtils {
         }
     }
 
+    /**
+     * Sistema inteligente de pronunciação para termos técnicos de programação
+     * Baseado em pesquisa de grandes plataformas TTS e phonetic matching
+     */
+    private static String applyIntelligentTechnicalPronunciation(String text) {
+        if (text == null || text.trim().isEmpty()) return text;
+        
+        String result = text;
+        
+        // ============ LINGUAGENS E FRAMEWORKS ============
+        
+        // JavaScript e variações
+        result = result.replaceAll("(?i)\\bnode\\.?js\\b", "nôude js");
+        result = result.replaceAll("(?i)\\bnode\\.javascript\\b", "nôude js"); // Corrige erro comum  
+        result = result.replaceAll("(?i)\\btypescript\\b", "táipe-scrípt");
+        result = result.replaceAll("(?i)\\bjavascript\\b", "java-scrípt");
+        
+        // React ecosystem e frameworks modernos
+        result = result.replaceAll("(?i)\\breact\\b", "ri-ácti");
+        result = result.replaceAll("(?i)\\bnext\\.?js\\b", "nécste js");
+        result = result.replaceAll("(?i)\\breact\\.?js\\b", "ri-ácti js");
+        result = result.replaceAll("(?i)\\bgatsby\\b", "gátisbi");
+        result = result.replaceAll("(?i)\\bremix\\b", "rêmix");
+        result = result.replaceAll("(?i)\\breturn\\b", "ritúrn");
+        result = result.replaceAll("(?i)\\bredux\\b", "rêdáks");
+        result = result.replaceAll("(?i)\\bzustand\\b", "zustánd");
+        result = result.replaceAll("(?i)\\bmobx\\b", "móbics");
+        result = result.replaceAll("(?i)\\brecoil\\b", "ricóil");
+        result = result.replaceAll("(?i)\\bjotai\\b", "jôtai");
+        result = result.replaceAll("(?i)\\bswr\\b", "es-dábliu-ar");
+        result = result.replaceAll("(?i)\\breact\\s+query\\b", "ri-ácti cuéri");
+        result = result.replaceAll("(?i)\\btanstack\\b", "tânstáck");
+        
+        // Vue ecosystem
+        result = result.replaceAll("(?i)\\bvue\\.?js\\b", "viúu jei-ésse");
+        result = result.replaceAll("(?i)\\bvue\\b", "viúu");
+        result = result.replaceAll("(?i)\\bnuxt\\.?js\\b", "náxti jei-ésse");
+        result = result.replaceAll("(?i)\\bnuxt\\b", "náxti");
+        result = result.replaceAll("(?i)\\bvuex\\b", "viúéx");
+        result = result.replaceAll("(?i)\\bpinia\\b", "pínia");
+        result = result.replaceAll("(?i)\\bvuepress\\b", "viúu prési");
+        result = result.replaceAll("(?i)\\bvuetify\\b", "viútifái");
+        result = result.replaceAll("(?i)\\bquasar\\b", "cuéisar");
+        
+        // Angular ecosystem
+        result = result.replaceAll("(?i)\\bangular\\.?js\\b", "ângular jei-ésse");
+        result = result.replaceAll("(?i)\\bangular\\b", "ângular");
+        result = result.replaceAll("(?i)\\bangularjs\\b", "ângular jei-ésse");
+        result = result.replaceAll("(?i)\\bionic\\b", "aiônic");
+        result = result.replaceAll("(?i)\\brxjs\\b", "ár ócsi jei-ésse");
+        result = result.replaceAll("(?i)\\bngrx\\b", "éne gí ár écsi");
+        
+        // Outros frameworks
+        result = result.replaceAll("(?i)\\bsvelte\\b", "svélti");
+        result = result.replaceAll("(?i)\\bsveltekit\\b", "svélti quíti");
+        result = result.replaceAll("(?i)\\bsolid\\.?js\\b", "sólidi jei-ésse");
+        result = result.replaceAll("(?i)\\bsolid\\b", "sólidi");
+        result = result.replaceAll("(?i)\\blit\\b", "líti");
+        result = result.replaceAll("(?i)\\bstencil\\b", "sténsil");
+        result = result.replaceAll("(?i)\\bpreact\\b", "priácti");
+        result = result.replaceAll("(?i)\\balpine\\.?js\\b", "alpáini jei-ésse");
+        result = result.replaceAll("(?i)\\balpine\\b", "alpáini");
+        
+        // ============ JAVA E SPRING ECOSYSTEM ============
+        
+        // Java core
+        result = result.replaceAll("(?i)\\bjava\\b(?!script)", "java"); // Preserva Java mas evita JavaScript
+        result = result.replaceAll("(?i)\\bopenjdk\\b", "óupenjêideikêi");
+        result = result.replaceAll("(?i)\\boracle\\s+jdk\\b", "óracou jêideikêi");
+        result = result.replaceAll("(?i)\\bjvm\\b", "jêi ví éme");
+        result = result.replaceAll("(?i)\\bjre\\b", "jêi ár í");
+        result = result.replaceAll("(?i)\\bmaven\\b", "méiven");
+        result = result.replaceAll("(?i)\\bgradle\\b", "grêidou");
+        result = result.replaceAll("(?i)\\bant\\b", "ânti");
+        result = result.replaceAll("(?i)\\bjunit\\b", "jêiúniti");
+        result = result.replaceAll("(?i)\\bmockito\\b", "mocíto");
+        result = result.replaceAll("(?i)\\bhibernate\\b", "ráibernêiti");
+        result = result.replaceAll("(?i)\\bjpa\\b", "jêi pê á");
+        
+        // Spring ecosystem
+        result = result.replaceAll("(?i)\\bspring\\s+boot\\b", "espríng búti");
+        result = result.replaceAll("(?i)\\bspring\\b", "espríng");
+        result = result.replaceAll("(?i)\\bspringboot\\b", "espríng búti");
+        result = result.replaceAll("(?i)\\bspring\\s+framework\\b", "espríng frêimeuórqui");
+        result = result.replaceAll("(?i)\\bspring\\s+mvc\\b", "espríng éme ví cí");
+        result = result.replaceAll("(?i)\\bspring\\s+data\\b", "espríng dêita");
+        result = result.replaceAll("(?i)\\bspring\\s+security\\b", "espríng seciúriti");
+        result = result.replaceAll("(?i)\\bspring\\s+cloud\\b", "espríng cláudi");
+        result = result.replaceAll("(?i)\\bspring\\s+webflux\\b", "espríng uébfláx");
+        result = result.replaceAll("(?i)\\bthymeleaf\\b", "táimolífi");
+        result = result.replaceAll("(?i)\\bresttemplate\\b", "résttémplêiti");
+        result = result.replaceAll("(?i)\\bwebclient\\b", "uébcláienti");
+        result = result.replaceAll("(?i)\\bmicroservices\\b", "máicroservíssis");
+        result = result.replaceAll("(?i)\\bmicroservice\\b", "máicroservíssi");
+        result = result.replaceAll("(?i)\\beureka\\b", "iuríca");
+        result = result.replaceAll("(?i)\\bgateway\\b", "gêiteuêi");
+        result = result.replaceAll("(?i)\\bconfigserver\\b", "confígservêr");
+        result = result.replaceAll("(?i)\\bcircuitbreaker\\b", "sércuitbrêiquêr");
+        result = result.replaceAll("(?i)\\bhystrix\\b", "rístrix");
+        result = result.replaceAll("(?i)\\bresilience4j\\b", "resíliensifórjêi");
+        
+        // Outras linguagens
+        result = result.replaceAll("(?i)\\bpython\\b", "páiton");
+        result = result.replaceAll("(?i)\\bc\\+\\+\\b", "cê mais mais");
+        result = result.replaceAll("(?i)\\bc#\\b", "cê sharp");
+        result = result.replaceAll("(?i)\\bf#\\b", "êfe sharp");
+        result = result.replaceAll("(?i)\\bphp\\b", "pê agá pê");
+        result = result.replaceAll("(?i)\\bruby\\b", "rúbi");
+        result = result.replaceAll("(?i)\\bgo\\b(?=\\s|$)", "gôu"); // Go language, evita palavras comuns
+        result = result.replaceAll("(?i)\\brust\\b", "rãsti");
+        result = result.replaceAll("(?i)\\bswift\\b", "suífti");
+        result = result.replaceAll("(?i)\\bkotlin\\b", "cótlin");
+        result = result.replaceAll("(?i)\\bscala\\b", "escála");
+        result = result.replaceAll("(?i)\\bgroovy\\b", "grúvi");
+        result = result.replaceAll("(?i)\\bclojure\\b", "clójuri");
+        result = result.replaceAll("(?i)\\berlang\\b", "érlang");
+        result = result.replaceAll("(?i)\\belixir\\b", "elícsir");
+        result = result.replaceAll("(?i)\\bhaskell\\b", "ráscou");
+        result = result.replaceAll("(?i)\\bocaml\\b", "ô camel");
+        result = result.replaceAll("(?i)\\bdart\\b", "dart");
+        result = result.replaceAll("(?i)\\br\\b(?=\\s|$)", "ár"); // R language
+        result = result.replaceAll("(?i)\\bmatlab\\b", "mátlábi");
+        result = result.replaceAll("(?i)\\bjulia\\b", "júlia");
+        result = result.replaceAll("(?i)\\bperl\\b", "péru");
+        result = result.replaceAll("(?i)\\bluau\\b", "luáu");
+        result = result.replaceAll("(?i)\\bzig\\b", "zíg");
+        result = result.replaceAll("(?i)\\bnim\\b", "ním");
+        result = result.replaceAll("(?i)\\bcrystal\\b", "cristau");
+        result = result.replaceAll("(?i)\\bv\\b(?=\\s+lang|\\s|$)", "ví"); // V language
+        
+        // ============ PLATAFORMAS E FERRAMENTAS ============
+        
+        // Git e GitHub
+        result = result.replaceAll("(?i)\\bgithub\\b", "guítarrábi");
+        result = result.replaceAll("(?i)\\bgitlab\\b", "guítilábi");
+        result = result.replaceAll("(?i)\\bgitea\\b", "guítia");
+        result = result.replaceAll("(?i)\\bbitbucket\\b", "bítibáqueti");
+        result = result.replaceAll("(?i)\\bgit\\b(?=\\s|$)", "guíti");
+        result = result.replaceAll("(?i)\\bsvn\\b", "ésse ví éne");
+        result = result.replaceAll("(?i)\\bmercurial\\b", "mercuriau");
+        
+        // Cloud providers
+        result = result.replaceAll("(?i)\\baws\\b", "êi dábliú ésse");
+        result = result.replaceAll("(?i)\\bamazon\\s+web\\s+services\\b", "amazon uébi servíssis");
+        result = result.replaceAll("(?i)\\bazure\\b", "áziure");
+        result = result.replaceAll("(?i)\\bgcp\\b", "jí cí pí");
+        result = result.replaceAll("(?i)\\bgoogle\\s+cloud\\b", "google claúdi");
+        result = result.replaceAll("(?i)\\bheroku\\b", "herôcu");
+        result = result.replaceAll("(?i)\\bvercel\\b", "vércel");
+        result = result.replaceAll("(?i)\\bnetlify\\b", "nétlifái");
+        result = result.replaceAll("(?i)\\bdigitalocean\\b", "dijitau ôuxian");
+        result = result.replaceAll("(?i)\\blinode\\b", "línodi");
+        result = result.replaceAll("(?i)\\bvultr\\b", "vúlter");
+        result = result.replaceAll("(?i)\\bcloudflare\\b", "clauriflér");
+        result = result.replaceAll("(?i)\\bfastly\\b", "fástli");
+        result = result.replaceAll("(?i)\\boracle\\s+cloud\\b", "óracle claúdi");
+        result = result.replaceAll("(?i)\\bibm\\s+cloud\\b", "ái bí éme claúdi");
+        
+        // Databases
+        result = result.replaceAll("(?i)\\bmongodb\\b", "môngo dí bí");
+        result = result.replaceAll("(?i)\\bmysql\\b", "mái écequéli");
+        result = result.replaceAll("(?i)\\bpostgresql\\b", "póstgres cúeli");
+        result = result.replaceAll("(?i)\\bpostgres\\b", "póstgres");
+        result = result.replaceAll("(?i)\\bredis\\b", "rédis");
+        result = result.replaceAll("(?i)\\bsqlite\\b", "écequéli láiti");
+        result = result.replaceAll("(?i)\\belasticsearch\\b", "elásti serchi");
+        result = result.replaceAll("(?i)\\bsolr\\b", "sóler");
+        result = result.replaceAll("(?i)\\bcassandra\\b", "casándra");
+        result = result.replaceAll("(?i)\\bcouchdb\\b", "cauchi dí bí");
+        result = result.replaceAll("(?i)\\bneo4j\\b", "níu fór jêi");
+        result = result.replaceAll("(?i)\\binfluxdb\\b", "ínflax dí bí");
+        result = result.replaceAll("(?i)\\bmariadb\\b", "maría dí bí");
+        result = result.replaceAll("(?i)\\bfirebase\\b", "fáirebéis");
+        result = result.replaceAll("(?i)\\bsupabase\\b", "súpabéis");
+        result = result.replaceAll("(?i)\\bprisma\\b", "prísma");
+        result = result.replaceAll("(?i)\\bsequelize\\b", "sicuélaizi");
+        result = result.replaceAll("(?i)\\bmongose\\b", "mongús");
+        result = result.replaceAll("(?i)\\bmongoose\\b", "mongús");
+        result = result.replaceAll("(?i)\\btypeorm\\b", "táip ó ár éme");
+        result = result.replaceAll("(?i)\\bdrizzle\\b", "drízou");
+        result = result.replaceAll("(?i)\\bflyway\\b", "flai-ou-ei");
+        result = result.replaceAll("(?i)\\bfliway\\b", "flai-ou-ei");
+
+        // ============ TECNOLOGIAS WEB ============
+        
+        // CSS e preprocessors
+        result = result.replaceAll("(?i)\\bcss\\b", "cê ésse ésse");
+        result = result.replaceAll("(?i)\\bhtml\\b", "agá tê éme éli");
+        result = result.replaceAll("(?i)\\bsass\\b", "sássi");
+        result = result.replaceAll("(?i)\\bscss\\b", "ésse cê ésse ésse");
+        result = result.replaceAll("(?i)\\bless\\b(?=\\s|$)", "léssi"); // CSS preprocessor
+        
+        // APIs e protocolos
+        result = result.replaceAll("(?i)\\bapi\\b", "êi-pí-ái");
+        result = result.replaceAll("(?i)\\brest\\b(?=\\s+api|\\s|$)", "réste");
+        result = result.replaceAll("(?i)\\bgraphql\\b", "gráfi-qu-el");
+        result = result.replaceAll("(?i)\\bgrpc\\b", "jêi ár pê cê");
+        result = result.replaceAll("(?i)\\bhttp\\b", "agá tê tê pê");
+        result = result.replaceAll("(?i)\\bhttps\\b", "agá tê tê pê ésse");
+        result = result.replaceAll("(?i)\\burl\\b", "U-R-L");
+        result = result.replaceAll("(?i)\\burls\\b", "U-R-Ls");
+        
+        // ============ FERRAMENTAS DE DESENVOLVIMENTO ============
+        
+        // Build tools e bundlers
+        result = result.replaceAll("(?i)\\bwebpack\\b", "uébpáqui");
+        result = result.replaceAll("(?i)\\bvite\\b", "víti");
+        result = result.replaceAll("(?i)\\bparcel\\b", "párcel");
+        result = result.replaceAll("(?i)\\bbabel\\b", "bábel");
+        result = result.replaceAll("(?i)\\brollup\\b", "rôlápi");
+        result = result.replaceAll("(?i)\\besbuild\\b", "ésbuíldi");
+        result = result.replaceAll("(?i)\\bturbopack\\b", "túrbopáqui");
+        result = result.replaceAll("(?i)\\bswc\\b", "ésse dábliú cí");
+        result = result.replaceAll("(?i)\\btsup\\b", "tí ésse ápi");
+        result = result.replaceAll("(?i)\\bunbuild\\b", "ãnbuíldi");
+        result = result.replaceAll("(?i)\\bbun\\b", "bãn");
+        result = result.replaceAll("(?i)\\bturborepo\\b", "túrborepu");
+        result = result.replaceAll("(?i)\\bnx\\b", "éne écsi");
+        result = result.replaceAll("(?i)\\brush\\b", "ráchi");
+        result = result.replaceAll("(?i)\\blerna\\b", "lérna");
+        result = result.replaceAll("(?i)\\bchangesets\\b", "tchêinjísets");
+        result = result.replaceAll("(?i)\\brollup\\b", "rôlápi");
+        
+        // Package managers
+        result = result.replaceAll("(?i)\\bnpm\\b", "éne pê éme");
+        result = result.replaceAll("(?i)\\byarn\\b", "iárni");
+        result = result.replaceAll("(?i)\\bpnpm\\b", "pê éne pê éme");
+        result = result.replaceAll("(?i)\\bpip\\b(?=\\s|$)", "pípi");
+        
+        // IDEs e editores
+        result = result.replaceAll("(?i)\\bvscode\\b", "ví ésse códi");
+        result = result.replaceAll("(?i)\\bvs\\s+code\\b", "ví ésse códi");
+        result = result.replaceAll("(?i)\\bvisual\\s+studio\\s+code\\b", "víjual estúdio códi");
+        result = result.replaceAll("(?i)\\bwebstorm\\b", "uébstórmi");
+        result = result.replaceAll("(?i)\\bintelij\\b", "intélij");
+        result = result.replaceAll("(?i)\\bintellij\\b", "intélijeí");
+        result = result.replaceAll("(?i)\\bjetbrains\\b", "jétbrêins");
+        result = result.replaceAll("(?i)\\bpycharm\\b", "páitchármi");
+        result = result.replaceAll("(?i)\\bphpstorm\\b", "pê agá pê stórmi");
+        result = result.replaceAll("(?i)\\brubymine\\b", "rúbimáini");
+        result = result.replaceAll("(?i)\\bgoland\\b", "gólãndi");
+        result = result.replaceAll("(?i)\\beclipse\\b", "iclípsi");
+        result = result.replaceAll("(?i)\\bsublime\\b", "sabláimi");
+        result = result.replaceAll("(?i)\\bsublime\\s+text\\b", "sabláimi téksti");
+        result = result.replaceAll("(?i)\\batom\\b(?=\\s|$)", "átomi");
+        result = result.replaceAll("(?i)\\bneovim\\b", "níovimi");
+        result = result.replaceAll("(?i)\\bnvim\\b", "ênevimi");
+        result = result.replaceAll("(?i)\\bvim\\b", "vimi");
+        result = result.replaceAll("(?i)\\bemacs\\b", "imáx");
+        result = result.replaceAll("(?i)\\bcursor\\b", "córser");
+        result = result.replaceAll("(?i)\\bzed\\b", "zédi");
+        result = result.replaceAll("(?i)\\bhelix\\b", "rélicsi");
+        result = result.replaceAll("(?i)\\bIDE\\b", "I-D-É");
+        result = result.replaceAll("(?i)\\bide\\b", "I-D-É");
+
+        // ============ CONCEITOS TÉCNICOS ============
+        
+        // ============ N8N E AUTOMAÇÃO ============
+        
+        result = result.replaceAll("(?i)\\bn8n\\b", "êne óito éne");
+        result = result.replaceAll("(?i)\\bworkflow\\b", "uórquiflo");
+        result = result.replaceAll("(?i)\\bworkflows\\b", "uórquiflos");
+        result = result.replaceAll("(?i)\\bwebhook\\b", "uébrúqui");
+        result = result.replaceAll("(?i)\\bwebhooks\\b", "uébrúquis");
+        result = result.replaceAll("(?i)\\bzapier\\b", "zápier");
+        result = result.replaceAll("(?i)\\bmake\\b", "mêiqui");
+        result = result.replaceAll("(?i)\\bintegromat\\b", "íntegromáti");
+        result = result.replaceAll("(?i)\\bautomation\\b", "ótomêishan");
+        result = result.replaceAll("(?i)\\bnodered\\b", "nóurêdi");
+        result = result.replaceAll("(?i)\\bnode\\s+red\\b", "nóu rêdi");
+        result = result.replaceAll("(?i)\\bifttt\\b", "ífe tí tí tí");
+        result = result.replaceAll("(?i)\\btrigger\\b", "tríger");
+        result = result.replaceAll("(?i)\\btriggers\\b", "trígers");
+        result = result.replaceAll("(?i)\\baction\\b", "ákshan");
+        result = result.replaceAll("(?i)\\bactions\\b", "ákshans");
+        
+        // ============ MCP (MODEL CONTEXT PROTOCOL) ============
+        
+        result = result.replaceAll("(?i)\\bmcp\\b", "éme cê pê");
+        result = result.replaceAll("(?i)\\bmodel\\s+context\\s+protocol\\b", "módeou cóntexti protócou");
+        result = result.replaceAll("(?i)\\bcontext\\s+protocol\\b", "cóntexti protócou");
+        result = result.replaceAll("(?i)\\bprotocol\\b", "protócou");
+        result = result.replaceAll("(?i)\\bllm\\b", "éli éli éme");
+        result = result.replaceAll("(?i)\\blarge\\s+language\\s+model\\b", "lárje lánguêije módeou");
+        result = result.replaceAll("(?i)\\bmultimodal\\b", "múltimódau");
+        result = result.replaceAll("(?i)\\bfoundation\\s+model\\b", "faunêishan módeou");
+        result = result.replaceAll("(?i)\\btransformer\\b", "transformêr");
+        result = result.replaceAll("(?i)\\btransformers\\b", "transformêrs");
+        result = result.replaceAll("(?i)\\battention\\b", "aténshan");
+        result = result.replaceAll("(?i)\\bself\\s+attention\\b", "sélfi aténshan");
+        result = result.replaceAll("(?i)\\bembedding\\b", "embédíng");
+        result = result.replaceAll("(?i)\\bembeddings\\b", "embédíngs");
+        result = result.replaceAll("(?i)\\bvector\\s+database\\b", "véctor dêitabêis");
+        result = result.replaceAll("(?i)\\bchroma\\b", "cróma");
+        result = result.replaceAll("(?i)\\bpinecone\\b", "páincóuni");
+        result = result.replaceAll("(?i)\\bweaviate\\b", "uíviêiti");
+        result = result.replaceAll("(?i)\\bqdrant\\b", "cuedránti");
+        
+        // ============ INTELIGÊNCIA ARTIFICIAL ============
+        
+        // Modelos e providers
+        result = result.replaceAll("(?i)\\bopenai\\b", "óupen á í");
+        result = result.replaceAll("(?i)\\bgpt\\b", "jêi pê tê");
+        result = result.replaceAll("(?i)\\bchatgpt\\b", "tchát jêi pê tê");
+        result = result.replaceAll("(?i)\\bgpt-4\\b", "jêi pê tê quatro");
+        result = result.replaceAll("(?i)\\bgpt-3\\b", "jêi pê tê três");
+        result = result.replaceAll("(?i)\\bclaude\\b", "clódi");
+        result = result.replaceAll("(?i)\\banthropic\\b", "ántropíqui");
+        result = result.replaceAll("(?i)\\bgemini\\b", "jémini");
+        result = result.replaceAll("(?i)\\bbard\\b", "bárdi");
+        result = result.replaceAll("(?i)\\bllama\\b", "láma");
+        result = result.replaceAll("(?i)\\bmistral\\b", "místrau");
+        result = result.replaceAll("(?i)\\bcohere\\b", "corír");
+        result = result.replaceAll("(?i)\\bhuggingface\\b", "rágíngfêis");
+        result = result.replaceAll("(?i)\\bhugging\\s+face\\b", "rágíng fêis");
+        result = result.replaceAll("(?i)\\bollama\\b", "óláma");
+        result = result.replaceAll("(?i)\\blangchain\\b", "lángcêin");
+        result = result.replaceAll("(?i)\\bllamaindex\\b", "láma índex");
+        
+        // Conceitos de IA
+        result = result.replaceAll("(?i)\\bmachine\\s+learning\\b", "machín lêrníngu");
+        result = result.replaceAll("(?i)\\bdeep\\s+learning\\b", "dípi lêrníngu");
+        result = result.replaceAll("(?i)\\bneural\\s+network\\b", "niúrau nétuórqui");
+        result = result.replaceAll("(?i)\\bai\\b", "á í");
+        result = result.replaceAll("(?i)\\bartificial\\s+intelligence\\b", "artífishiau intélijêns");
+        result = result.replaceAll("(?i)\\bprompt\\b", "prómpt");
+        result = result.replaceAll("(?i)\\bprompts\\b", "prómpts");
+        result = result.replaceAll("(?i)\\bprompt\\s+engineering\\b", "prómpt enjiníríngu");
+        result = result.replaceAll("(?i)\\bfinetuning\\b", "fáintiúníngu");
+        result = result.replaceAll("(?i)\\bfine\\s+tuning\\b", "fáin tiúníngu");
+        result = result.replaceAll("(?i)\\brag\\b", "rág");
+        result = result.replaceAll("(?i)\\bretrieval\\s+augmented\\s+generation\\b", "ritríval ógmentêdi jenerêishan");
+        result = result.replaceAll("(?i)\\btoken\\b", "tóquen");
+        result = result.replaceAll("(?i)\\btokens\\b", "tóquens");
+        result = result.replaceAll("(?i)\\btokenizer\\b", "tóquenaizêr");
+        result = result.replaceAll("(?i)\\btemperature\\b", "témperetiúr");
+        result = result.replaceAll("(?i)\\btop\\s+p\\b", "tópi pí");
+        result = result.replaceAll("(?i)\\btop\\s+k\\b", "tópi quêi");
+        
+        // DevOps
+        result = result.replaceAll("(?i)\\bdocker\\b", "dôquer");
+        result = result.replaceAll("(?i)\\bkubernetes\\b", "cubernítes");
+        result = result.replaceAll("(?i)\\bci/cd\\b", "cí ái cí dí");
+        result = result.replaceAll("(?i)\\bjenkins\\b", "jénquins");
+        result = result.replaceAll("(?i)\\bansible\\b", "ánsibou");
+        result = result.replaceAll("(?i)\\bterraform\\b", "terrafórmi");
+        
+        // Metodologias
+        result = result.replaceAll("(?i)\\bagile\\b", "ájail");
+        result = result.replaceAll("(?i)\\bscrum\\b", "escrãmi");
+        result = result.replaceAll("(?i)\\bkanban\\b", "cãnbãn");
+        result = result.replaceAll("(?i)\\bdevops\\b", "dévóps");
+        
+        // ============ EXTENSÕES E FORMATOS ============
+        
+        // Apenas depois de tratar casos específicos, tratar JS genérico
+        result = result.replaceAll("(?i)\\b\\.js\\b", "ponto jei ésse");
+        result = result.replaceAll("(?i)\\b\\.ts\\b", "ponto tí ésse");
+        result = result.replaceAll("(?i)\\b\\.jsx\\b", "ponto jei ésse écsi");
+        result = result.replaceAll("(?i)\\b\\.tsx\\b", "ponto tí ésse écsi");
+        result = result.replaceAll("(?i)\\b\\.css\\b", "ponto cé ésse ésse");
+        result = result.replaceAll("(?i)\\b\\.html\\b", "ponto agá tê éme éli");
+        result = result.replaceAll("(?i)\\b\\.json\\b", "ponto jêissão");
+        result = result.replaceAll("(?i)\\b\\.xml\\b", "ponto écsi éme éli");
+        result = result.replaceAll("(?i)\\b\\.yml\\b", "ponto iámeli");
+        result = result.replaceAll("(?i)\\b\\.yaml\\b", "ponto iámel");
+        
+        // ============ TERMOS GENÉRICOS ============
+        
+        // Só aplicar JS genérico se não foi tratado acima
+        if (!result.toLowerCase().contains("nóud") && !result.toLowerCase().contains("néksti")) {
+            result = result.replaceAll("(?i)\\bjs\\b(?!\\s*(quinze|[0-9]))", "jei ésse");
+        }
+        
+        // Outros termos
+        result = result.replaceAll("(?i)\\bslash\\b", "bárra");
+        result = result.replaceAll("(?i)\\bblog\\b", "blóg");
+        result = result.replaceAll("(?i)\\bweb\\b", "uébi");
+        result = result.replaceAll("(?i)\\bapp\\b", "ápi");
+        result = result.replaceAll("(?i)\\bsite\\b", "sáiti");
+        result = result.replaceAll("(?i)\\bonline\\b", "ônláini");
+        result = result.replaceAll("(?i)\\boffline\\b", "ófláini");
+        result = result.replaceAll("(?i)\\bbackend\\b", "báquéndi");
+        result = result.replaceAll("(?i)\\bfrontend\\b", "frôntêndi");
+        result = result.replaceAll("(?i)\\bfullstack\\b", "fúlestáqui");
+        
+        return result;
+    }
+
+    // ============ CACHE PARA PRONUNCIAÇÃO AI ============
+    private static final Map<String, String> pronunciationCache = new ConcurrentHashMap<>();
+    private static final Set<String> processedTexts = ConcurrentHashMap.newKeySet();
+    private static boolean aiPronunciationEnabled = true; // Pode ser desabilitado se necessário
+    
+    /**
+     * Sistema AI de Pronunciação Dinâmica
+     * Detecta palavras em inglês e gera pronunciação fonética automaticamente
+     */
+    private static String applyAIPoweredPronunciationCorrection(String text) {
+        if (text == null || text.trim().isEmpty()) return text;
+        
+        // Evitar processamento duplicado do mesmo texto
+        String textHash = String.valueOf(text.hashCode());
+        if (processedTexts.contains(textHash)) {
+            return applyPronunciationFromCache(text);
+        }
+        
+        try {
+            // Detectar palavras em inglês que podem estar mal pronunciadas
+            List<String> englishWords = detectEnglishWords(text);
+            
+            if (!englishWords.isEmpty()) {
+                logger.info("🤖 Detectadas " + englishWords.size() + " palavras técnicas para correção AI");
+                
+                // Processar palavras em lotes para eficiência
+                Map<String, String> newPronunciations = processWordsWithAI(englishWords);
+                
+                // Adicionar ao cache
+                pronunciationCache.putAll(newPronunciations);
+                
+                // Aplicar correções
+                String correctedText = applyPronunciationCorrections(text, newPronunciations);
+                
+                // Marcar como processado
+                processedTexts.add(textHash);
+                
+                if (!newPronunciations.isEmpty()) {
+                    logger.info("✅ Aplicadas " + newPronunciations.size() + " correções de pronunciação AI");
+                }
+                
+                return correctedText;
+            }
+            
+        } catch (Exception e) {
+            logger.warning("⚠️ Erro no sistema AI de pronunciação: " + e.getMessage());
+        }
+        
+        return text;
+    }
+    
+    /**
+     * Detecta palavras em inglês que podem precisar de correção
+     */
+    private static List<String> detectEnglishWords(String text) {
+        List<String> englishWords = new ArrayList<>();
+        
+        // Regex para encontrar palavras que parecem ser termos técnicos em inglês
+        Pattern englishPattern = Pattern.compile("\\b[a-zA-Z]+(?:\\.[a-zA-Z]+)*\\b");
+        Matcher matcher = englishPattern.matcher(text);
+        
+        while (matcher.find()) {
+            String word = matcher.group().toLowerCase();
+            
+            // Filtros para identificar possíveis termos técnicos
+            if (isLikelyTechnicalTerm(word) && !pronunciationCache.containsKey(word)) {
+                englishWords.add(word);
+            }
+        }
+        
+        return englishWords.stream().distinct().collect(Collectors.toList());
+    }
+    
+    /**
+     * Identifica APENAS termos técnicos em inglês conhecidos
+     * EXTREMAMENTE RESTRITIVO - só processa palavras na whitelist
+     */
+    private static boolean isLikelyTechnicalTerm(String word) {
+        // LISTA DEFINITIVA de termos técnicos em INGLÊS que precisam de correção de pronúncia
+        Set<String> englishTechnicalTerms = Set.of(
+            // Frameworks e Libraries
+            "react", "angular", "vue", "svelte", "nextjs", "nuxtjs", "gatsby",
+            "spring", "hibernate", "maven", "gradle", "junit", "mockito",
+            "docker", "kubernetes", "jenkins", "ansible", "terraform",
+            "webpack", "vite", "babel", "rollup", "parcel",
+            "nodejs", "typescript", "javascript", "jquery", "bootstrap",
+            
+            // Banco de dados e storage
+            "mysql", "postgresql", "mongodb", "redis", "elasticsearch",
+            "firebase", "supabase", "dynamodb", "cassandra",
+            
+            // Cloud e DevOps
+            "aws", "azure", "gcp", "github", "gitlab", "bitbucket",
+            "vercel", "netlify", "heroku", "cloudflare",
+            
+            // Arquiteturas e padrões
+            "microservices", "serverless", "restful", "graphql",
+            "api", "sdk", "cli", "ide", "framework", "library",
+            "backend", "frontend", "fullstack", "middleware",
+            
+            // Tecnologias específicas
+            "ai", "ml", "iot", "blockchain", "websocket", "jwt",
+            "oauth", "saml", "cors", "csrf", "ssl", "tls",
+            
+            // Extensões de arquivo (sem ponto)
+            "jsx", "tsx", "json", "yaml", "dockerfile"
+        );
+        
+        // Converter para lowercase para comparação
+        String lowerWord = word.toLowerCase();
+        
+        // APENAS processar se a palavra estiver na lista de termos técnicos em inglês
+        return englishTechnicalTerms.contains(lowerWord);
+    }
+    
+    /**
+     * Processa palavras com IA para gerar pronunciações
+     */
+    private static Map<String, String> processWordsWithAI(List<String> words) {
+        Map<String, String> pronunciations = new HashMap<>();
+        
+        if (words.isEmpty()) return pronunciations;
+        
+        try {
+            // Construir prompt para IA
+            String wordsText = String.join(", ", words);
+            String prompt = buildPronunciationPrompt(wordsText);
+            
+            // Chamar API Google Gemini (mais rápida para tarefas simples)
+            String response = callGoogleGeminiForPronunciation(prompt);
+            
+            // Parse da resposta
+            pronunciations = parsePronunciationResponse(response, words);
+            
+        } catch (Exception e) {
+            logger.warning("⚠️ Erro na consulta AI para pronunciação: " + e.getMessage());
+        }
+        
+        return pronunciations;
+    }
+    
+    /**
+     * Builds specialized prompt for pronunciation in English for better AI understanding
+     */
+    private static String buildPronunciationPrompt(String words) {
+        return "You are a specialist in adapting English technical terms pronunciation for Brazilian Portuguese TTS using Piper model.\n\n" +
+               "CRITICAL: Create pronunciations that sound NATURAL when spoken in Brazilian Portuguese, not literal English sounds.\n\n" +
+               "PRONUNCIATION GUIDELINES:\n" +
+               "- Use Brazilian Portuguese phonetic patterns: 'a' as in 'casa', 'e' as in 'café', 'i' as in 'pizza'\n" +
+               "- Replace English sounds with similar Portuguese sounds:\n" +
+               "  * 'th' → 't' or 'd'\n" +
+               "  * 'w' → 'u' or 'v'\n" +
+               "  * 'sh' → 'ch'\n" +
+               "  * Silent letters should be dropped\n" +
+               "- For acronyms: spell each letter in Portuguese (API = êi-pí-ái)\n" +
+               "- Use hyphens for clarity in compound terms\n" +
+               "- Avoid English vowel sounds that don't exist in Portuguese\n\n" +
+               "EXAMPLES:\n" +
+               "javascript = java-scrípt\n" +
+               "react = ri-ácti\n" +
+               "typescript = táipe-scrípt\n" +
+               "api = êi-pí-ái\n\n" +
+               "FORMAT: word = pronunciation\n\n" +
+               "TECHNICAL TERMS: " + words + "\n\n" +
+               "PRONUNCIATIONS:";
+    }
+    
+    /**
+     * Chama Google Gemini para pronunciação (mais rápido que Gemma)
+     */
+    private static String callGoogleGeminiForPronunciation(String prompt) throws IOException, InterruptedException {
+        String apiKey = "AIzaSyA1pPJP2fhtFVAVRstdIOZfCZQlektuGpQ"; // Mesma chave usada na tradução
+        String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey;
+        
+        String requestBody = """
+            {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": "%s"
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 500
+                }
+            }
+            """.formatted(prompt.replace("\"", "\\\""));
+        
+        ProcessBuilder pb = new ProcessBuilder(
+            "curl", "-s", "-X", "POST", url,
+            "-H", "Content-Type: application/json",
+            "-d", requestBody
+        );
+        
+        Process process = pb.start();
+        boolean finished = process.waitFor(10, TimeUnit.SECONDS);
+        
+        if (!finished) {
+            process.destroyForcibly();
+            throw new IOException("Timeout na consulta AI para pronunciação");
+        }
+        
+        StringBuilder output = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line);
+            }
+        }
+        
+        // Parse JSON para extrair texto
+        String response = output.toString();
+        Pattern textPattern = Pattern.compile("\"text\"\\s*:\\s*\"([^\"]+)\"");
+        Matcher matcher = textPattern.matcher(response);
+        
+        if (matcher.find()) {
+            return matcher.group(1).replace("\\n", "\n");
+        }
+        
+        throw new IOException("Resposta inválida da API Gemini");
+    }
+    
+    /**
+     * Parse da resposta AI para extrair pronunciações
+     */
+    private static Map<String, String> parsePronunciationResponse(String response, List<String> originalWords) {
+        Map<String, String> pronunciations = new HashMap<>();
+        
+        String[] lines = response.split("\n");
+        for (String line : lines) {
+            line = line.trim();
+            if (line.contains("=")) {
+                String[] parts = line.split("=", 2);
+                if (parts.length == 2) {
+                    String word = parts[0].trim().toLowerCase();
+                    String pronunciation = parts[1].trim();
+                    
+                    // Verificar se é uma palavra que pedimos
+                    if (originalWords.contains(word)) {
+                        pronunciations.put(word, pronunciation);
+                    }
+                }
+            }
+        }
+        
+        return pronunciations;
+    }
+    
+    /**
+     * Aplica correções do cache
+     */
+    private static String applyPronunciationFromCache(String text) {
+        String result = text;
+        
+        for (Map.Entry<String, String> entry : pronunciationCache.entrySet()) {
+            String word = entry.getKey();
+            String pronunciation = entry.getValue();
+            
+            // Aplicar correção com word boundaries
+            result = result.replaceAll("(?i)\\b" + Pattern.quote(word) + "\\b", pronunciation);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Aplica correções específicas
+     */
+    private static String applyPronunciationCorrections(String text, Map<String, String> corrections) {
+        String result = text;
+        
+        for (Map.Entry<String, String> entry : corrections.entrySet()) {
+            String word = entry.getKey();
+            String pronunciation = entry.getValue();
+            
+            result = result.replaceAll("(?i)\\b" + Pattern.quote(word) + "\\b", pronunciation);
+        }
+        
+        return result;
+    }
+
     private static String normalizeTextForSpeechOptimized(String text) {
         if (text == null || text.trim().isEmpty()) return "";
 
@@ -2577,34 +3253,11 @@ public class TTSUtils {
         normalized = normalized.replaceAll("\\b75\\.000\\b", "setenta e cinco mil");
         normalized = normalized.replaceAll("\\b19\\b", "dezenove");
 
-        // Normalização de termos técnicos otimizada
-        // Primeiro tratar Next.js especificamente para evitar conversões erradas
-        normalized = normalized.replace("Next. js", "Next jey ésse"); // Com espaço
-        normalized = normalized.replace("Next.js", "Next jey ésse");   // Sem espaço
-        normalized = normalized.replace("NEXT.JS", "Next jey ésse");   // Maiúsculo
-        normalized = normalized.replace("next.js", "Next jey ésse");   // Minúsculo
-        // Só depois tratar js genérico
-        normalized = normalized.replaceAll("\\bjs\\b(?!\\s*(quinze|[0-9]))", "javascript"); // Evita Next.js
-        normalized = normalized.replaceAll("\\bJS\\b(?!\\s*(quinze|[0-9]))", "JavaScript"); // Evita Next.JS
-        normalized = normalized.replaceAll("\\bCSS\\b", "CSS");
-        normalized = normalized.replaceAll("\\bHTML\\b", "HTML");
-        normalized = normalized.replaceAll("\\bAPI\\b", "A P I");
+        // ============ SISTEMA INTELIGENTE DE PRONUNCIAÇÃO TÉCNICA ============
+        normalized = applyIntelligentTechnicalPronunciation(normalized);
         
-        // Substituições específicas de termos técnicos em português
-        normalized = normalized.replaceAll("\\bslash\\b", "barra");
-        normalized = normalized.replaceAll("\\bSlash\\b", "barra");
-        normalized = normalized.replaceAll("\\bSLASH\\b", "barra");
-        
-        // Melhorias de pronúncia específicas
-        normalized = normalized.replaceAll("\\bblog\\b", "blóg");
-        normalized = normalized.replaceAll("\\bBlog\\b", "Blóg");
-        normalized = normalized.replaceAll("\\bBLOG\\b", "BLÓG");
-        
-        // URLs e siglas técnicas
-        normalized = normalized.replaceAll("\\bURL\\b", "u-r-l");
-        normalized = normalized.replaceAll("\\burl\\b", "u-r-l");
-        normalized = normalized.replaceAll("\\bURLs\\b", "u-r-l-s");
-        normalized = normalized.replaceAll("\\burls\\b", "u-r-l-s");
+        // ============ SISTEMA AI DE PRONUNCIAÇÃO DINÂMICA ============
+        normalized = applyAIPoweredPronunciationCorrection(normalized);
 
         // Limpeza final otimizada
         normalized = normalized.replaceAll("\\s+", " ").trim();
@@ -2937,7 +3590,87 @@ public class TTSUtils {
         double resultDuration = measureAudioDurationAccurate(outputFile);
         logger.info(String.format("✅ CONCATENAÇÃO COPY concluída: %.3fs - QUALIDADE ORIGINAL PRESERVADA", resultDuration));
 
+        // ✅ PASSO 6: Mixar com accompaniment.wav se disponível
+        Path mixedOutputFile = mixWithAccompaniment(outputFile);
+        if (mixedOutputFile != null) {
+            // Substituir o arquivo original pelo mixado
+            Files.move(mixedOutputFile, outputFile, StandardCopyOption.REPLACE_EXISTING);
+            resultDuration = measureAudioDurationAccurate(outputFile);
+            logger.info(String.format("🎵 ÁUDIO MIXADO com accompaniment concluído: %.3fs", resultDuration));
+        }
+
         return resultDuration;
+    }
+
+    /**
+     * 🎵 MIXAR ÁUDIO DUBLADO COM ACCOMPANIMENT (SONS DE FUNDO)
+     */
+    private static Path mixWithAccompaniment(Path dubbedAudioFile) throws IOException, InterruptedException {
+        // Verificar se accompaniment.wav existe na pasta output
+        Path outputDir = dubbedAudioFile.getParent();
+        Path accompanimentFile = outputDir.resolve("accompaniment.wav");
+        
+        if (!Files.exists(accompanimentFile)) {
+            logger.info("📎 Accompaniment.wav não encontrado - pulando mixagem");
+            return null;
+        }
+        
+        logger.info("🎵 Iniciando mixagem de áudio dublado + accompaniment...");
+        
+        // Arquivo de saída mixado
+        Path mixedFile = OUTPUT_DIR.resolve("mixed_final_" + System.currentTimeMillis() + ".wav");
+        
+        // Comando FFmpeg para mixar os dois áudios
+        List<String> ffmpegCmd = new ArrayList<>();
+        ffmpegCmd.add("ffmpeg");
+        ffmpegCmd.add("-y"); // Sobrescrever arquivo se existir
+        ffmpegCmd.add("-i");
+        ffmpegCmd.add(dubbedAudioFile.toString()); // Áudio dublado (voz)
+        ffmpegCmd.add("-i");
+        ffmpegCmd.add(accompanimentFile.toString()); // Accompaniment (música de fundo)
+        
+        // Filtro para mixar: áudio dublado + accompaniment tratado com EQ suave
+        ffmpegCmd.add("-filter_complex");
+        ffmpegCmd.add("[0:a]volume=1.0[voice];[1:a]volume=0.6,lowpass=f=8000,highpass=f=80[bg];[voice][bg]amix=inputs=2:duration=first:dropout_transition=2[out]");
+        ffmpegCmd.add("-map");
+        ffmpegCmd.add("[out]");
+        ffmpegCmd.add("-c:a");
+        ffmpegCmd.add("pcm_s16le"); // Manter formato WAV
+        ffmpegCmd.add("-ar");
+        ffmpegCmd.add("44100"); // Sample rate padrão
+        ffmpegCmd.add(mixedFile.toString());
+        
+        logger.info("🔧 Executando mixagem FFmpeg...");
+        ProcessBuilder pb = new ProcessBuilder(ffmpegCmd);
+        pb.redirectErrorStream(true);
+        
+        Process process = pb.start();
+        boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+        
+        if (!finished) {
+            process.destroyForcibly();
+            throw new IOException("Timeout na mixagem de áudio");
+        }
+        
+        if (process.exitValue() != 0) {
+            // Capturar erro para debug
+            StringBuilder errorOutput = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    errorOutput.append(line).append("\n");
+                }
+            }
+            logger.severe("Erro na mixagem FFmpeg: " + errorOutput.toString());
+            throw new IOException("Falha na mixagem de áudio");
+        }
+        
+        if (!Files.exists(mixedFile) || Files.size(mixedFile) == 0) {
+            throw new IOException("Arquivo mixado não foi criado ou está vazio");
+        }
+        
+        logger.info("✅ Mixagem concluída: voz + accompaniment combinados com sucesso");
+        return mixedFile;
     }
 
     /**

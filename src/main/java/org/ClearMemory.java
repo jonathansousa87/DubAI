@@ -55,19 +55,16 @@ public class ClearMemory {
 
     // Lista de processos alvo para limpeza agressiva
     private static final String[] TARGET_PROCESSES = {
-            "python", "ollama", "whisperx", "pytorch", "tensorflow",
+            "python", "whisperx", "pytorch", "tensorflow",
             "cuda", "nvidia", "tts", "spleeter", "ffmpeg"
     };
-
-    // Configurações para Docker/Ollama
-    private static final String OLLAMA_CONTAINER_NAME = "ollama-container";
-    private static final String OLLAMA_DOCKER_IMAGE = "ollama/ollama";
-    private static final int OLLAMA_DOCKER_PORT = 11434;
 
     // Lista de processos críticos para nunca matar
     private static final String[] PROTECTED_PROCESSES = {
             "nvidia-smi", "nvidia-persistenced", "Xorg", "gnome", "systemd",
-            "idea", "intellij", "jetbrains", "java.*Main", "DubAIGUI"
+            "idea", "intellij", "jetbrains", "java.*Main", "DubAIGUI",
+            "plasmashell", "kwin", "plasma", "kde", "kioworker", "kded",
+            "sddm", "pulseaudio", "pipewire", "wireplumber"
     };
 
     private static record ProcessInfo(int pid, String name, int usedMemory, long timestamp) {
@@ -173,14 +170,8 @@ public class ClearMemory {
             killProcessesByName(nomeFor, true);
         }
 
-        // NOVO: Limpeza específica do Ollama Docker se detectado
-        if (isOllamaRunningInDocker()) {
-            LOGGER.info("🐳 Ollama Docker detectado, aplicando limpeza específica...");
-            forceOllamaMemoryCleanup();
-        }
-
         // Mata processos principais de ML/AI
-        String[] criticalTargets = {"python", "ollama", "whisperx", "pytorch"};
+        String[] criticalTargets = {"python", "whisperx", "pytorch"};
         for (String target : criticalTargets) {
             killProcessesByName(target, false);
         }
@@ -215,22 +206,7 @@ public class ClearMemory {
 
         if (nomeFor.equalsIgnoreCase("cleanup") || nomeFor.equalsIgnoreCase("warmup")) {
             cleanupStaleProcesses();
-            
-            // NOVO: Limpeza específica de cache do Ollama se detectado
-            if (isOllamaRunningInDocker()) {
-                clearOllamaModelCache();
-            }
-            
             forceSystemCleanup();
-        } else if (nomeFor.equalsIgnoreCase("ollama")) {
-            // Limpeza gentil específica para Ollama
-            if (isOllamaRunningInDocker()) {
-                clearOllamaModelCache();
-                Thread.sleep(1000);
-                cleanOllamaMemoryInsideContainer();
-            } else {
-                killProcessesByName(nomeFor, false);
-            }
         } else {
             killProcessesByName(nomeFor, false);
             cleanupStaleProcesses();
@@ -243,15 +219,7 @@ public class ClearMemory {
      * Mata processos por nome com opção de força
      */
     private static void killProcessesByName(String namePattern, boolean forceKill) throws IOException, InterruptedException {
-        // Primeiro tenta parar serviços Docker/systemd se aplicável
-        if (namePattern.equalsIgnoreCase("ollama")) {
-            if (isOllamaRunningInDocker()) {
-                // Para Docker, usa limpeza de memória sem reiniciar completamente
-                cleanOllamaMemoryInsideContainer();
-            } else {
-                tryStopSystemdService("ollama");
-            }
-        }
+        // Limpeza padrão de processos por nome
         
         List<ProcessInfo> processes = getCurrentProcesses();
         List<ProcessInfo> toKill = new ArrayList<>();
@@ -295,7 +263,7 @@ public class ClearMemory {
     }
 
     /**
-     * Força limpeza do sistema
+     * Força limpeza do sistema incluindo caches AI
      */
     private static void forceSystemCleanup() {
         try {
@@ -306,6 +274,9 @@ public class ClearMemory {
                 Thread.sleep(100);
             }
 
+            // Limpa caches de modelos AI em /tmp
+            cleanupAIModelCaches();
+
             // Tenta limpar cache CUDA se disponível
             ProcessBuilder cudaReset = new ProcessBuilder("nvidia-smi", "--gpu-reset");
             Process process = cudaReset.start();
@@ -315,6 +286,72 @@ public class ClearMemory {
 
         } catch (Exception e) {
             LOGGER.fine("Erro na limpeza do sistema: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Limpa caches de modelos AI que ocupam /tmp
+     */
+    private static void cleanupAIModelCaches() {
+        try {
+            LOGGER.info("🧹 Limpando caches de modelos AI em /tmp...");
+            
+            // Caminhos comuns de cache de modelos AI
+            String[] cachePaths = {
+                "/tmp/cache/hub/models--Systran--faster-whisper-large-v3",
+                "/tmp/cache/xet", 
+                "/tmp/cache/hub/checkpoints",
+                "/tmp/.cache",
+                "/tmp/huggingface_cache",
+                "/tmp/transformers_cache"
+            };
+            
+            long totalFreed = 0;
+            
+            for (String cachePath : cachePaths) {
+                try {
+                    // Verifica se o diretório existe
+                    ProcessBuilder duCheck = new ProcessBuilder("du", "-sb", cachePath);
+                    Process duProcess = duCheck.start();
+                    
+                    if (duProcess.waitFor(5, TimeUnit.SECONDS) && duProcess.exitValue() == 0) {
+                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(duProcess.getInputStream()))) {
+                            String line = reader.readLine();
+                            if (line != null) {
+                                long sizeBytes = Long.parseLong(line.split("\\s+")[0]);
+                                long sizeMB = sizeBytes / (1024 * 1024);
+                                
+                                if (sizeMB > 100) { // Só limpa se > 100MB
+                                    LOGGER.info(String.format("🗑️ Removendo cache: %s (%.1f GB)", 
+                                        cachePath, sizeMB / 1024.0));
+                                    
+                                    ProcessBuilder rmProcess = new ProcessBuilder("rm", "-rf", cachePath);
+                                    Process rm = rmProcess.start();
+                                    
+                                    if (rm.waitFor(30, TimeUnit.SECONDS)) {
+                                        totalFreed += sizeMB;
+                                        LOGGER.info(String.format("✅ Cache removido: %s", cachePath));
+                                    } else {
+                                        rm.destroyForcibly();
+                                        LOGGER.warning(String.format("⏰ Timeout removendo: %s", cachePath));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    LOGGER.fine(String.format("Erro limpando %s: %s", cachePath, e.getMessage()));
+                }
+            }
+            
+            if (totalFreed > 0) {
+                LOGGER.info(String.format("🎯 Total liberado: %.2f GB de cache AI", totalFreed / 1024.0));
+            } else {
+                LOGGER.fine("💾 Nenhum cache AI grande encontrado para limpar");
+            }
+            
+        } catch (Exception e) {
+            LOGGER.warning("❌ Erro na limpeza de caches AI: " + e.getMessage());
         }
     }
 
@@ -568,6 +605,26 @@ public class ClearMemory {
     }
 
     /**
+     * Limpeza manual de caches AI (método público)
+     */
+    public static void cleanAIModelCaches() {
+        try {
+            LOGGER.info("🧹 Executando limpeza manual de caches AI...");
+            cleanupAIModelCaches();
+            
+            // Força garbage collection após limpeza
+            for (int i = 0; i < 3; i++) {
+                System.gc();
+                Thread.sleep(100);
+            }
+            
+            LOGGER.info("✅ Limpeza manual de caches AI concluída");
+        } catch (Exception e) {
+            LOGGER.warning("❌ Erro na limpeza manual de caches: " + e.getMessage());
+        }
+    }
+
+    /**
      * FORÇA LIMPEZA CUDA REAL - mata processos Python/PyTorch que seguram VRAM
      */
     public static void forceCudaCleanup() {
@@ -608,417 +665,4 @@ public class ClearMemory {
         }
     }
 
-    /**
-     * INICIA container Ollama Docker SOMENTE para tradução
-     */
-    public static void startOllamaForTranslation() {
-        try {
-            // Verificar se já está rodando
-            ProcessBuilder checkOllama = new ProcessBuilder("docker", "ps", "--filter", "name=ollama-container", "--format", "{{.Names}}");
-            Process checkProcess = checkOllama.start();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(checkProcess.getInputStream()))) {
-                String line = reader.readLine();
-                if (line != null && line.trim().equals("ollama-container")) {
-                    LOGGER.info("✅ Container Ollama já está rodando");
-                    return;
-                }
-            }
-            
-            LOGGER.info("🐳 Iniciando Ollama Docker para tradução...");
-            ProcessBuilder startOllama = new ProcessBuilder("docker", "start", "ollama-container");
-            Process startProcess = startOllama.start();
-            if (startProcess.waitFor(10, TimeUnit.SECONDS)) {
-                LOGGER.info("✅ Container Ollama iniciado para tradução");
-                
-                // Aguardar API estar pronta (máximo 30s)
-                boolean apiReady = false;
-                for (int i = 0; i < 30; i++) {
-                    try {
-                        ProcessBuilder testApi = new ProcessBuilder("curl", "-s", "--max-time", "2", "http://localhost:11434/api/tags");
-                        Process testProcess = testApi.start();
-                        if (testProcess.waitFor(3, TimeUnit.SECONDS) && testProcess.exitValue() == 0) {
-                            apiReady = true;
-                            LOGGER.info("✅ API Ollama pronta após " + (i + 1) + " segundos");
-                            break;
-                        }
-                        Thread.sleep(1000);
-                    } catch (Exception e) {
-                        // Continuar tentando
-                    }
-                }
-                
-                if (!apiReady) {
-                    LOGGER.warning("⚠️ API Ollama não ficou pronta em 30 segundos");
-                }
-            } else {
-                startProcess.destroyForcibly();
-                LOGGER.warning("⏰ Timeout ao iniciar Ollama Docker");
-            }
-        } catch (Exception e) {
-            LOGGER.warning("⚠️ Erro ao iniciar Ollama Docker: " + e.getMessage());
-        }
-    }
-
-    /**
-     * PARA container Ollama Docker para liberar VRAM
-     */
-    public static void stopOllamaAfterTranslation() {
-        try {
-            LOGGER.info("🐳 Parando Ollama Docker para liberar VRAM...");
-            
-            ProcessBuilder stopOllama = new ProcessBuilder("docker", "stop", "ollama-container");
-            Process stopProcess = stopOllama.start();
-            if (stopProcess.waitFor(10, TimeUnit.SECONDS)) {
-                LOGGER.info("🧹 Container Ollama parado - VRAM liberada");
-                
-                // LIMPEZA AUTOMÁTICA /tmp para Piper TTS
-                cleanTmpForPiper();
-                
-                Thread.sleep(2000); // Aguardar liberação completa
-            } else {
-                stopProcess.destroyForcibly();
-                LOGGER.warning("⏰ Timeout ao parar Ollama Docker");
-            }
-        } catch (Exception e) {
-            LOGGER.warning("⚠️ Erro ao parar Ollama Docker: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Limpa arquivos temporários Docker que impedem Piper TTS
-     */
-    private static void cleanTmpForPiper() {
-        try {
-            LOGGER.info("🧹 Limpando /tmp para garantir funcionamento do Piper...");
-            
-            // Remover arquivos runc-process que lotam /tmp
-            ProcessBuilder cleanRunc = new ProcessBuilder("sudo", "rm", "-rf", "/tmp/runc-process*");
-            Process cleanProcess = cleanRunc.start();
-            cleanProcess.waitFor(5, TimeUnit.SECONDS);
-            
-            // Remover outros arquivos Docker temporários
-            ProcessBuilder cleanDocker = new ProcessBuilder("sudo", "find", "/tmp", "-name", "*docker*", "-type", "f", "-delete");
-            Process dockerProcess = cleanDocker.start();
-            dockerProcess.waitFor(5, TimeUnit.SECONDS);
-            
-            LOGGER.info("✅ Limpeza /tmp concluída - Piper TTS deve funcionar");
-            
-        } catch (Exception e) {
-            LOGGER.warning("⚠️ Erro na limpeza /tmp: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Gerencia container Docker do Ollama para liberação de memória GPU
-     */
-    public static void restartOllamaService() {
-        try {
-            // Primeiro tenta detectar se é Docker ou systemd
-            if (isOllamaRunningInDocker()) {
-                restartOllamaDocker();
-            } else {
-                restartOllamaSystemd();
-            }
-        } catch (Exception e) {
-            LOGGER.warning(String.format("❌ Erro gerenciando Ollama: %s", e.getMessage()));
-        }
-    }
-
-    /**
-     * Verifica se Ollama está rodando em Docker
-     */
-    private static boolean isOllamaRunningInDocker() {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("docker", "ps", "--format", "{{.Names}}", "--filter", "name=" + OLLAMA_CONTAINER_NAME);
-            Process process = pb.start();
-            
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line = reader.readLine();
-                return line != null && line.trim().equals(OLLAMA_CONTAINER_NAME);
-            }
-        } catch (Exception e) {
-            LOGGER.fine("Erro verificando Docker: " + e.getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Força limpeza de memória GPU do container Ollama
-     */
-    public static void forceOllamaMemoryCleanup() {
-        try {
-            LOGGER.info("🧹 Forçando limpeza de memória GPU do Ollama...");
-            
-            if (isOllamaRunningInDocker()) {
-                // Método 1: Executa comando dentro do container para liberar memória
-                cleanOllamaMemoryInsideContainer();
-                
-                // Método 2: Se não funcionar, reinicia o container
-                Thread.sleep(2000);
-                GPUMemoryStatus status = getCurrentMemoryStatus();
-                if (status.usedMemory > CRITICAL_MEMORY_THRESHOLD_MB) {
-                    LOGGER.warning("🔄 Memoria ainda alta, reiniciando container Ollama...");
-                    restartOllamaDocker();
-                }
-            } else {
-                restartOllamaSystemd();
-            }
-        } catch (Exception e) {
-            LOGGER.severe("❌ Erro na limpeza forçada do Ollama: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Limpa memória GPU dentro do container Ollama
-     */
-    private static void cleanOllamaMemoryInsideContainer() throws IOException, InterruptedException {
-        LOGGER.info("🧠 Limpando memória GPU dentro do container Ollama...");
-        
-        // Comando para liberar cache de modelos no Ollama
-        ProcessBuilder pb = new ProcessBuilder(
-                "docker", "exec", OLLAMA_CONTAINER_NAME, 
-                "sh", "-c", "pkill -f ollama || true"
-        );
-        
-        Process process = pb.start();
-        if (process.waitFor(10, TimeUnit.SECONDS)) {
-            if (process.exitValue() == 0) {
-                LOGGER.info("✅ Processos Ollama limpos no container");
-            } else {
-                LOGGER.warning("⚠️ Falha parcial na limpeza de processos Ollama");
-            }
-        } else {
-            LOGGER.warning("⏱️ Timeout na limpeza de processos Ollama");
-            process.destroyForcibly();
-        }
-        
-        // Força garbage collection dentro do container se possível
-        try {
-            pb = new ProcessBuilder(
-                    "docker", "exec", OLLAMA_CONTAINER_NAME,
-                    "sh", "-c", "echo 'Liberando recursos...' && sync"
-            );
-            pb.start().waitFor(5, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            LOGGER.fine("Info: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Reinicia container Docker do Ollama
-     */
-    private static void restartOllamaDocker() throws IOException, InterruptedException {
-        LOGGER.info("🔄 Reiniciando container Docker do Ollama...");
-        
-        // Para o container
-        ProcessBuilder pb = new ProcessBuilder("docker", "stop", OLLAMA_CONTAINER_NAME);
-        Process process = pb.start();
-        
-        if (process.waitFor(30, TimeUnit.SECONDS)) {
-            if (process.exitValue() == 0) {
-                LOGGER.info("🛑 Container Ollama parado");
-                
-                // Aguarda limpeza completa da GPU
-                Thread.sleep(3000);
-                
-                // Reinicia o container
-                pb = new ProcessBuilder("docker", "start", OLLAMA_CONTAINER_NAME);
-                process = pb.start();
-                
-                if (process.waitFor(30, TimeUnit.SECONDS)) {
-                    if (process.exitValue() == 0) {
-                        LOGGER.info("✅ Container Ollama reiniciado com sucesso");
-                        
-                        // Aguarda o container ficar pronto
-                        waitForOllamaReady();
-                    } else {
-                        LOGGER.warning("⚠️ Falha ao reiniciar container Ollama");
-                    }
-                } else {
-                    LOGGER.warning("⏱️ Timeout reiniciando container Ollama");
-                    process.destroyForcibly();
-                }
-            } else {
-                LOGGER.warning("⚠️ Falha ao parar container Ollama");
-            }
-        } else {
-            LOGGER.warning("⏱️ Timeout parando container Ollama");
-            process.destroyForcibly();
-        }
-    }
-
-    /**
-     * Aguarda o container Ollama ficar pronto para uso
-     */
-    private static void waitForOllamaReady() {
-        LOGGER.info("⏳ Aguardando Ollama ficar pronto...");
-        
-        for (int i = 0; i < 10; i++) {
-            try {
-                ProcessBuilder pb = new ProcessBuilder(
-                        "docker", "exec", OLLAMA_CONTAINER_NAME,
-                        "curl", "-f", "http://localhost:11434/api/tags"
-                );
-                Process process = pb.start();
-                
-                if (process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() == 0) {
-                    LOGGER.info("✅ Ollama está pronto!");
-                    return;
-                }
-            } catch (Exception e) {
-                // Ignora e tenta novamente
-            }
-            
-            try {
-                Thread.sleep(2000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        
-        LOGGER.warning("⚠️ Timeout aguardando Ollama ficar pronto");
-    }
-
-    /**
-     * Reinicia serviço systemd tradicional (fallback)
-     */
-    private static void restartOllamaSystemd() throws IOException, InterruptedException {
-        LOGGER.info("🔄 Reiniciando container Docker Ollama...");
-        ProcessBuilder pb = new ProcessBuilder("docker", "start", "ollama-container");
-        Process process = pb.start();
-        
-        if (process.waitFor(15, TimeUnit.SECONDS)) {
-            if (process.exitValue() == 0) {
-                LOGGER.info("✅ Container Ollama reiniciado com sucesso");
-                // Aguardar o serviço estar pronto
-                Thread.sleep(5000);
-            } else {
-                LOGGER.warning(String.format("⚠️ Falha ao reiniciar container Ollama (exit code: %d)", process.exitValue()));
-            }
-        } else {
-            LOGGER.warning("⏱️ Timeout reiniciando container Ollama");
-            process.destroyForcibly();
-        }
-    }
-
-    /**
-     * Shutdown graceful
-     */
-    public static void shutdownExecutor() {
-        LOGGER.info("🔄 Finalizando gestão GPU...");
-
-        stopContinuousMonitoring();
-        executor.shutdown();
-
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-
-        knownProcesses.clear();
-        LOGGER.info("✅ Gestão GPU finalizada");
-    }
-
-    /**
-     * Método de conveniência para limpeza otimizada do Ollama Docker
-     * Usa as melhores práticas para Docker container
-     */
-    public static void optimizedOllamaCleanup() {
-        try {
-            LOGGER.info("🚀 Iniciando limpeza otimizada do Ollama Docker...");
-            
-            GPUMemoryStatus initialStatus = getCurrentMemoryStatus();
-            LOGGER.info(String.format("📊 Memória inicial: %d MB (%.1f%%)", 
-                       initialStatus.usedMemory, initialStatus.usagePercentage));
-            
-            if (isOllamaRunningInDocker()) {
-                // 1. Limpeza gentil via API primeiro
-                clearOllamaModelCache();
-                Thread.sleep(2000);
-                
-                // 2. Verifica se precisa de limpeza mais agressiva
-                GPUMemoryStatus afterCache = getCurrentMemoryStatus();
-                if (afterCache.usedMemory > SAFE_MEMORY_THRESHOLD_MB) {
-                    LOGGER.info("💪 Memória ainda alta, aplicando limpeza mais agressiva...");
-                    forceOllamaMemoryCleanup();
-                }
-                
-                // 3. Relatório final
-                Thread.sleep(1000);
-                GPUMemoryStatus finalStatus = getCurrentMemoryStatus();
-                int memoryFreed = initialStatus.usedMemory - finalStatus.usedMemory;
-                LOGGER.info(String.format("✅ Limpeza concluída! Liberados: %d MB (%.1f%% → %.1f%%)", 
-                           memoryFreed, initialStatus.usagePercentage, finalStatus.usagePercentage));
-                
-            } else {
-                LOGGER.info("ℹ️ Ollama não está rodando em Docker, usando limpeza tradicional");
-                runClearNameThenThreshold("ollama");
-            }
-            
-        } catch (Exception e) {
-            LOGGER.severe("❌ Erro na limpeza otimizada: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Método utilitário para verificar uso de memória GPU por containers Docker
-     */
-    public static void logDockerGpuUsage() {
-        try {
-            if (isOllamaRunningInDocker()) {
-                // Verifica estatísticas do container
-                ProcessBuilder pb = new ProcessBuilder("docker", "stats", OLLAMA_CONTAINER_NAME, "--no-stream", "--format", "table {{.Container}}\t{{.MemUsage}}\t{{.CPUPerc}}");
-                Process process = pb.start();
-
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                    reader.lines().forEach(line -> LOGGER.info("🐳 Docker: " + line));
-                }
-
-                if (process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0) {
-                    // Verifica também a GPU
-                    GPUMemoryStatus gpuStatus = getCurrentMemoryStatus();
-                    LOGGER.info(String.format("🎮 GPU: %d/%d MB (%.1f%%) com Ollama Docker ativo", 
-                               gpuStatus.usedMemory, gpuStatus.totalMemory, gpuStatus.usagePercentage));
-                }
-            }
-        } catch (Exception e) {
-            LOGGER.fine("Erro verificando Docker GPU usage: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Método específico para liberar cache de modelos do Ollama via API
-     */
-    public static void clearOllamaModelCache() {
-        try {
-            LOGGER.info("🗑️ Tentando limpar cache de modelos Ollama via API...");
-            
-            // Tenta parar todos os modelos carregados
-            ProcessBuilder pb = new ProcessBuilder(
-                    "curl", "-s", "-X", "POST", 
-                    "http://localhost:" + OLLAMA_DOCKER_PORT + "/api/generate",
-                    "-H", "Content-Type: application/json",
-                    "-d", "{\"model\":\"deepseek-r1:8b\",\"keep_alive\":0}"
-            );
-            
-            Process process = pb.start();
-            if (process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0) {
-                LOGGER.info("✅ Comando para descarregar modelo enviado");
-                
-                // Aguarda um pouco para o modelo ser descarregado
-                Thread.sleep(3000);
-                
-                // Verifica se a memória foi liberada
-                GPUMemoryStatus status = getCurrentMemoryStatus();
-                LOGGER.info(String.format("📊 Memória GPU após limpeza de cache: %d MB", status.usedMemory));
-            }
-        } catch (Exception e) {
-            LOGGER.warning("❌ Erro limpando cache de modelos: " + e.getMessage());
-        }
-    }
 }

@@ -73,16 +73,21 @@ public class SpleeterUtils {
     }
 
     public static void concatenateAccompaniment(String separatedDir, String outputFile) throws IOException, InterruptedException {
+        System.out.println("🎵 Iniciando concatenação de accompaniment: " + separatedDir + " -> " + outputFile);
         concatenateAudioFiles(separatedDir, "accompaniment.wav", outputFile, "concat_list_accompaniment.txt");
+        System.out.println("✅ Concatenação de accompaniment concluída: " + outputFile);
     }
 
     private static void concatenateAudioFiles(String separatedDir, String fileName, String outputFile, String listFileName) throws IOException, InterruptedException {
+        System.out.println("🔧 Concatenando arquivos: " + fileName + " em " + separatedDir);
         File separatedDirectory = new File(separatedDir);
         File[] subDirs = separatedDirectory.listFiles(File::isDirectory);
 
         if (subDirs == null || subDirs.length == 0) {
             throw new IOException("Nenhum subdiretório encontrado em " + separatedDir);
         }
+        
+        System.out.println("📁 Encontrados " + subDirs.length + " subdiretórios para concatenar " + fileName);
 
         // CORREÇÃO 2: Ordenar os subdiretórios numericamente
         Arrays.sort(subDirs, new Comparator<File>() {

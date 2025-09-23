@@ -32,14 +32,14 @@ public class DubAIGUI extends JFrame {
     
     // Componentes da interface
     private JTextField videoDirField;
-    private JComboBox<String> modelComboBox;
+    // Removed modelComboBox - using only Google Gemma 3 API
     private JComboBox<String> translationMethodComboBox;
     private JTextField googleApiKeyField;
     private JLabel googleApiKeyLabel;
     private JTextArea logArea;
     private JProgressBar progressBar;
     private JButton processButton;
-    private JButton refreshModelsButton;
+    // Removed refreshModelsButton - no longer needed without Ollama
     
     // Cores profissionais
     private static final Color PRIMARY_COLOR = new Color(33, 150, 243);
@@ -50,11 +50,6 @@ public class DubAIGUI extends JFrame {
     public DubAIGUI() {
         initializeGUI();
         redirectConsoleToGUI(); // Redirecionar console para GUI
-        
-        // Inicializar container Ollama se estiver parado
-        initializeOllamaContainer();
-        
-        loadOllamaModels();
     }
 
     private void initializeGUI() {
@@ -199,28 +194,12 @@ public class DubAIGUI extends JFrame {
         gbc.insets = new Insets(5, 5, 5, 5);
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
-        // Modelo Ollama
-        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0;
-        modelsPanel.add(new JLabel("Modelo Ollama:"), gbc);
-        
-        gbc.gridx = 1; gbc.weightx = 1.0;
-        modelComboBox = new JComboBox<>();
-        modelComboBox.setPreferredSize(new Dimension(200, 25));
-        modelsPanel.add(modelComboBox, gbc);
-        
-        gbc.gridx = 2; gbc.weightx = 0.0;
-        refreshModelsButton = new JButton("🔄");
-        refreshModelsButton.setToolTipText("Atualizar lista de modelos");
-        refreshModelsButton.addActionListener(e -> loadOllamaModels());
-        modelsPanel.add(refreshModelsButton, gbc);
-
         // Método de tradução
-        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0;
+        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0;
         modelsPanel.add(new JLabel("Tradução:"), gbc);
         
         gbc.gridx = 1; gbc.weightx = 1.0; gbc.gridwidth = 2;
         translationMethodComboBox = new JComboBox<>(new String[]{
-            "Ollama (Local)",
             "Google Gemma 3 27B (API)"
         });
         translationMethodComboBox.setPreferredSize(new Dimension(200, 25));
@@ -267,121 +246,9 @@ public class DubAIGUI extends JFrame {
         return bottomPanel;
     }
 
-    private void loadOllamaModels() {
-        CompletableFuture.runAsync(() -> {
-            SwingUtilities.invokeLater(() -> {
-                refreshModelsButton.setEnabled(false);
-                refreshModelsButton.setText("⏳");
-                modelComboBox.removeAllItems();
-                modelComboBox.addItem("🔄 Carregando modelos...");
-            });
-
-            try {
-                List<String> models = getOllamaModels();
-                
-                SwingUtilities.invokeLater(() -> {
-                    modelComboBox.removeAllItems();
-                    if (models.isEmpty()) {
-                        modelComboBox.addItem("❌ Nenhum modelo encontrado");
-                        logMessage("AVISO: Nenhum modelo Ollama encontrado. Execute 'ollama pull deepseek-r1:8b'");
-                    } else {
-                        for (String model : models) {
-                            modelComboBox.addItem(model);
-                        }
-                        // Selecionar deepseek-r1 como padrão se disponível
-                        for (int i = 0; i < models.size(); i++) {
-                            if (models.get(i).contains("deepseek-r1")) {
-                                modelComboBox.setSelectedIndex(i);
-                                break;
-                            }
-                        }
-                        logMessage("✅ " + models.size() + " modelos Ollama carregados");
-                    }
-                    refreshModelsButton.setEnabled(true);
-                    refreshModelsButton.setText("🔄");
-                });
-
-            } catch (Exception e) {
-                SwingUtilities.invokeLater(() -> {
-                    modelComboBox.removeAllItems();
-                    modelComboBox.addItem("❌ Erro ao carregar modelos");
-                    logMessage("ERRO: " + e.getMessage());
-                    refreshModelsButton.setEnabled(true);
-                    refreshModelsButton.setText("🔄");
-                });
-            }
-        });
-    }
 
     /**
-     * Inicializa container Ollama Docker se estiver parado
      */
-    private void initializeOllamaContainer() {
-        logMessage("🔍 Verificando container Ollama Docker...");
-        
-        // Limpeza preventiva /tmp ao abrir GUI
-        cleanTmpPreventive();
-        
-        try {
-            // Verificar se container está rodando
-            ProcessBuilder checkOllama = new ProcessBuilder("docker", "ps", "--filter", "name=ollama-container", "--format", "{{.Names}}");
-            Process checkProcess = checkOllama.start();
-            
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(checkProcess.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line.trim());
-                }
-            }
-            
-            if (output.toString().equals("ollama-container")) {
-                logMessage("✅ Container Ollama já está rodando");
-                return;
-            }
-            
-            // Container não está rodando, vamos iniciá-lo
-            logMessage("🐳 Iniciando container Ollama Docker...");
-            ProcessBuilder startOllama = new ProcessBuilder("docker", "start", "ollama-container");
-            Process startProcess = startOllama.start();
-            
-            if (startProcess.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) {
-                if (startProcess.exitValue() == 0) {
-                    logMessage("✅ Container Ollama iniciado com sucesso");
-                    
-                    // Aguardar API estar pronta
-                    logMessage("⏳ Aguardando API Ollama ficar pronta...");
-                    boolean apiReady = false;
-                    for (int i = 0; i < 15; i++) {
-                        try {
-                            ProcessBuilder testApi = new ProcessBuilder("curl", "-s", "--max-time", "2", "http://localhost:11434/api/tags");
-                            Process testProcess = testApi.start();
-                            if (testProcess.waitFor(3, java.util.concurrent.TimeUnit.SECONDS) && testProcess.exitValue() == 0) {
-                                apiReady = true;
-                                logMessage("✅ API Ollama pronta após " + (i + 1) + " segundos");
-                                break;
-                            }
-                            Thread.sleep(1000);
-                        } catch (Exception e) {
-                            // Continuar tentando
-                        }
-                    }
-                    
-                    if (!apiReady) {
-                        logMessage("⚠️ API Ollama pode não estar completamente pronta");
-                    }
-                } else {
-                    logMessage("❌ Falha ao iniciar container Ollama");
-                }
-            } else {
-                startProcess.destroyForcibly();
-                logMessage("❌ Timeout ao iniciar container Ollama");
-            }
-            
-        } catch (Exception e) {
-            logMessage("❌ Erro ao verificar/iniciar Ollama: " + e.getMessage());
-        }
-    }
 
     /**
      * Limpeza preventiva /tmp ao abrir GUI
@@ -402,40 +269,6 @@ public class DubAIGUI extends JFrame {
         }
     }
 
-    private List<String> getOllamaModels() throws Exception {
-        List<String> models = new ArrayList<>();
-        
-        // Usar API HTTP do Ollama (mais estável que Docker exec)
-        ProcessBuilder pb = new ProcessBuilder("curl", "-s", "http://localhost:11434/api/tags");
-        Process process = pb.start();
-        
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-            
-            // Parse simples do JSON para extrair nomes dos modelos
-            String json = response.toString();
-            if (json.contains("\"models\":[")) {
-                // Extrair nomes dos modelos do JSON
-                String[] parts = json.split("\"name\":\"");
-                for (int i = 1; i < parts.length; i++) {
-                    String modelName = parts[i].split("\"")[0];
-                    if (!modelName.isEmpty()) {
-                        models.add(modelName);
-                    }
-                }
-            }
-        }
-        
-        if (process.waitFor() != 0 || models.isEmpty()) {
-            throw new RuntimeException("Ollama não está disponível. Verifique se está instalado e rodando.");
-        }
-        
-        return models;
-    }
 
     private void browseVideo() {
         JFileChooser fileChooser = new JFileChooser();
@@ -516,23 +349,11 @@ public class DubAIGUI extends JFrame {
             Translation.setGoogleApiKey(apiKey);
             Translation.setTranslationMethod(Translation.TranslationMethod.GOOGLE_GEMMA_3);
             logMessage("🤖 Configurado para usar Google Gemma 3 27B");
-        } else {
-            // Usar Ollama Local
-            Translation.setTranslationMethod(Translation.TranslationMethod.OLLAMA);
-            
-            // PARAR Container Ollama para liberar VRAM antes do processamento
-            logMessage("🐳 Parando container Ollama para liberar VRAM...");
-            try {
-                ClearMemory.stopOllamaAfterTranslation();
-                logMessage("✅ Container Ollama parado - VRAM liberada para processamento");
-            } catch (Exception ex) {
-                logMessage("⚠️ Erro ao parar Ollama: " + ex.getMessage());
-            }
         }
         
         // Validação dos campos
         String videosDir = videoDirField.getText().trim();
-        String selectedModel = (String) modelComboBox.getSelectedItem();
+        String selectedModel = "Google Gemma 3 27B (API)"; // Fixed model since Ollama was removed
 
         if (videosDir.isEmpty()) {
             JOptionPane.showMessageDialog(this, "Selecione a pasta contendo os vídeos!", "Erro", JOptionPane.ERROR_MESSAGE);
@@ -554,10 +375,7 @@ public class DubAIGUI extends JFrame {
             return;
         }
 
-        if (selectedModel == null || selectedModel.startsWith("❌") || selectedModel.startsWith("🔄")) {
-            JOptionPane.showMessageDialog(this, "Selecione um modelo Ollama válido!", "Erro", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
+        // Removed model validation since we're using fixed Google Gemma 3 model
 
         // Desabilitar controles durante processamento
         setProcessingState(true);
@@ -661,22 +479,49 @@ public class DubAIGUI extends JFrame {
 
             updateProgress(baseProgress + progressRange * 25 / 100, "Separando vocal...");
             String vocalsPath = separateAudio(audioPath, outputDir);
-
+            // Limpeza após Spleeter
+            System.gc();
+            
             updateProgress(baseProgress + progressRange * 50 / 100, "Transcrevendo...");
             String vttPath = transcribeAudio(vocalsPath, outputDir);
+            // Limpeza após Whisper
+            try {
+                org.ClearMemory.runClearNameThenThreshold("whisper");
+                logMessage("🧹 Memória limpa após transcrição");
+            } catch (Exception e) {
+                logMessage("⚠️ Aviso: falha na limpeza pós-transcrição: " + e.getMessage());
+            }
 
             updateProgress(baseProgress + progressRange * 70 / 100, "Traduzindo...");
             String translatedVttPath = translateVtt(vttPath, outputDir, model, translationMethod);
 
             updateProgress(baseProgress + progressRange * 85 / 100, "Gerando TTS...");
             String dubedAudioPath = generateTTS(translatedVttPath, outputDir);
+            // Limpeza após TTS
+            try {
+                org.ClearMemory.cleanAIModelCaches();
+                System.gc();
+                logMessage("🧹 Cache AI limpo após TTS");
+            } catch (Exception e) {
+                logMessage("⚠️ Aviso: falha na limpeza pós-TTS: " + e.getMessage());
+            }
 
             updateProgress(baseProgress + progressRange * 95 / 100, "Combinando vídeo...");
             String finalVideoPath = combineVideoWithAudio(videoPath, dubedAudioPath, outputDir);
 
-            ClearMemory.stopOllamaAfterTranslation();
 
         } finally {
+            // Limpeza final completa antes do próximo vídeo
+            try {
+                logMessage("🧹 Limpeza final de memória...");
+                org.ClearMemory.runClearNameThenThreshold("final_cleanup");
+                org.ClearMemory.cleanAIModelCaches();
+                System.gc();
+                logMessage("✅ Memória totalmente limpa para próximo vídeo");
+            } catch (Exception e) {
+                logMessage("⚠️ Aviso: falha na limpeza final: " + e.getMessage());
+            }
+            
             // --- INÍCIO DO NOVO BLOCO DE CONTAGEM REGRESSIVA ---
             logMessage("✅ Etapa concluída. Preparando para o próximo vídeo...");
             try {
@@ -738,11 +583,6 @@ public class DubAIGUI extends JFrame {
         try {
             updateProgress(5, "Preparando processamento...");
             
-            // Verificar se o Ollama está funcionando
-            if (!checkOllamaStatus()) {
-                throw new RuntimeException("Ollama não está funcionando. Verifique se está rodando.");
-            }
-            
             updateProgress(10, "Extraindo áudio do vídeo...");
             String audioPath = extractAudio(videoPath, outputDir);
             
@@ -772,19 +612,6 @@ public class DubAIGUI extends JFrame {
         }
     }
     
-    private boolean checkOllamaStatus() {
-        try {
-            // Verificar API HTTP do Ollama
-            ProcessBuilder pb = new ProcessBuilder("curl", "-s", "--max-time", "3", "http://localhost:11434/api/tags");
-            Process process = pb.start();
-            boolean result = process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() == 0;
-            logMessage(result ? "✅ Ollama API está funcionando" : "❌ Ollama API não está respondendo");
-            return result;
-        } catch (Exception e) {
-            logMessage("❌ Erro ao verificar Ollama API: " + e.getMessage());
-            return false;
-        }
-    }
     
     private String extractAudio(String videoPath, String outputDir) throws Exception {
         String audioPath = outputDir + "/audio.wav";
@@ -819,7 +646,11 @@ public class DubAIGUI extends JFrame {
             // Concatenar vocais
             SpleeterUtils.concatenateVocals(outputDir + "/separated/", vocalsPath);
             
-            logMessage("✅ Separação de vocal concluída");
+            // Concatenar accompaniment (sons de fundo)
+            String accompanimentPath = outputDir + "/accompaniment.wav";
+            SpleeterUtils.concatenateAccompaniment(outputDir + "/separated/", accompanimentPath);
+            
+            logMessage("✅ Separação de vocal e accompaniment concluída");
         } catch (Exception e) {
             logMessage("❌ Erro na separação: " + e.getMessage());
             // Fallback: usar áudio original se separação falhar
@@ -862,25 +693,20 @@ public class DubAIGUI extends JFrame {
         // Verificar se estamos usando Google Gemma 3
         boolean isGoogleGemma = method.equals("Google Gemma 3 27B (API)");
         
-        // 🧹 Limpeza e restart do Ollama apenas se estiver usando Ollama Local
         if (!isGoogleGemma) {
             try {
-                logMessage("🧹 Limpando GPU e reiniciando Ollama...");
+                // Limpeza de GPU + caches AI
                 org.ClearMemory.runClearNameThenThreshold("gui_pre_translation_intensive");
+                org.ClearMemory.cleanAIModelCaches(); // Limpa caches de modelos AI
                 
-                // ⚡ RESTART OBRIGATÓRIO DO OLLAMA (apenas para Ollama Local)
-                org.ClearMemory.restartOllamaService();
-                logMessage("🔄 Container Ollama reiniciado");
                 Thread.sleep(3000); // Aguardar restart
                 
                 // Segunda limpeza
-                org.ClearMemory.runClearNameThenThreshold("gui_post_ollama_restart");
-                logMessage("✅ GPU totalmente limpa para tradução");
+                logMessage("✅ GPU e caches AI totalmente limpos para tradução");
             } catch (Exception e) {
                 logMessage("⚠️ Aviso: falha na limpeza pré-tradução: " + e.getMessage());
             }
         } else {
-            logMessage("🚀 Usando Google Gemma 3 API - sem necessidade de restart do Ollama");
         }
         
         // INTEGRAÇÃO REAL com Translation usando TSV otimizado
@@ -969,9 +795,9 @@ public class DubAIGUI extends JFrame {
 
     private void setProcessingState(boolean processing) {
         processButton.setEnabled(!processing);
-        refreshModelsButton.setEnabled(!processing);
+        // Removed refreshModelsButton - no longer needed without Ollama
         videoDirField.setEnabled(!processing);
-        modelComboBox.setEnabled(!processing);
+        // Removed modelComboBox - using only Google Gemma 3 API
         translationMethodComboBox.setEnabled(!processing);
 
         if (!processing) {
@@ -1012,9 +838,7 @@ public class DubAIGUI extends JFrame {
         
         if (isGoogleGemma) {
             logMessage("🤖 Google Gemma 3 27B selecionado - API Key já configurada");
-            logMessage("🚀 Modelo mais poderoso que Ollama, sem uso de VRAM local");
         } else {
-            logMessage("🏠 Ollama Local selecionado - Usando modelos locais");
         }
     }
 

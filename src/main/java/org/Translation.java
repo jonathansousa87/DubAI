@@ -21,25 +21,16 @@ public class Translation {
 
     // =========== CONFIGURAÇÕES ===========
     
-    // OPÇÃO 1: Ollama Local (modelos locais)
-    private static final String[] PREFERRED_OLLAMA_MODELS = {
-        "deepseek-r1:8b",           // Mais rápido e preciso
-        "gemma2:9b",                // Fallback confiável
-        "llama3.1:8b"               // Último recurso
-    };
-    private static final String OLLAMA_API_URL = "http://localhost:11434/api/generate";
-    
-    // OPÇÃO 2: Google Gemma 3 27B (API gratuita - mais poderoso)
+    // Google Gemma 3 27B (API gratuita - mais poderoso)
     private static final String GOOGLE_AI_API_KEY = "AIzaSyA1pPJP2fhtFVAVRstdIOZfCZQlektuGpQ"; // Mesma key do Gemini
     private static final String GOOGLE_AI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent";
     
     // Controle de método de tradução
     public enum TranslationMethod {
-        OLLAMA,         // Usa Ollama local
         GOOGLE_GEMMA_3  // Usa Google Gemma 3 27B API
     }
     
-    private static TranslationMethod currentMethod = TranslationMethod.OLLAMA;
+    private static TranslationMethod currentMethod = TranslationMethod.GOOGLE_GEMMA_3;
     private static String googleApiKey = GOOGLE_AI_API_KEY;
     
     // =========== MÉTODOS PÚBLICOS DE CONFIGURAÇÃO ===========
@@ -509,11 +500,10 @@ public class Translation {
                 
                 boolean recovered = false;
                 
-                // TENTATIVA 1: Limpeza + Restart Ollama
+                // TENTATIVA 1: Limpeza agressiva
                 try {
-                    logger.info("🔧 [1/3] Limpeza agressiva + Restart Ollama...");
+                    logger.info("🔧 [1/3] Limpeza agressiva...");
                     ClearMemory.runClearNameThenThreshold("critical_recovery_" + absoluteBatchIndex);
-                    ClearMemory.restartOllamaService();
                     Thread.sleep(8000); // Aguarda mais tempo para restart
                     
                     logger.info("🔄 Tentativa de recuperação 1/3...");
@@ -528,7 +518,6 @@ public class Translation {
                     // TENTATIVA 2: Duplo restart + modelo menor
                     try {
                         logger.info("🔧 [2/3] Duplo restart + modelo menor...");
-                        ClearMemory.restartOllamaService(); // Segunda limpeza
                         Thread.sleep(5000);
                         
                         logger.info("🔄 Tentativa de recuperação 2/3 (modelo menor)...");
@@ -555,41 +544,19 @@ public class Translation {
     }
     
     /**
-     * Tradução com modelo reduzido (apenas o modelo principal, 1 tentativa)
+     * Tradução com modelo reduzido (usa Google Gemma 3)
      */
     private static List<TranslatedSegment> translateBatchWithReducedModel(List<TranscriptionSegment> batch) throws IOException, InterruptedException {
-        String batchText = buildBatchText(batch);
-        
-        // Usar apenas o modelo principal com 1 tentativa
-        try {
-            String translatedBatch = callOllamaTranslation(batchText, PREFERRED_OLLAMA_MODELS[0]);
-            List<TranslatedSegment> result = parseBatchResult(batch, translatedBatch);
-            
-            // Não validar aqui - validação só no final para evitar re-processar batches
-            return result;
-        } catch (Exception e) {
-            throw new IOException("Modelo reduzido falhou: " + e.getMessage(), e);
-        }
+        // Usar Google Gemma 3 para recuperação
+        return translateBatchWithGoogleGemma(batch, buildBatchText(batch));
     }
     
     /**
-     * Tradução com modelo de fallback (último modelo da lista)
+     * Tradução com modelo de fallback (usa Google Gemma 3)
      */
     private static List<TranslatedSegment> translateBatchWithFallbackModel(List<TranscriptionSegment> batch) throws IOException, InterruptedException {
-        String batchText = buildBatchText(batch);
-        
-        // Usar o último modelo (mais leve) com timeout curto
-        String fallbackModel = PREFERRED_OLLAMA_MODELS[PREFERRED_OLLAMA_MODELS.length - 1];
-        
-        try {
-            String translatedBatch = callOllamaTranslation(batchText, fallbackModel);
-            List<TranslatedSegment> result = parseBatchResult(batch, translatedBatch);
-            
-            // Não validar aqui - validação só no final para evitar re-processar batches
-            return result;
-        } catch (Exception e) {
-            throw new IOException("Modelo fallback falhou: " + e.getMessage(), e);
-        }
+        // Usar Google Gemma 3 para fallback também
+        return translateBatchWithGoogleGemma(batch, buildBatchText(batch));
     }
     
     /**
@@ -608,55 +575,13 @@ public class Translation {
     private static List<TranslatedSegment> translateBatch(List<TranscriptionSegment> batch) throws IOException, InterruptedException {
         String batchText = buildBatchText(batch);
         
-        // Escolher método de tradução baseado na configuração
-        if (currentMethod == TranslationMethod.GOOGLE_GEMMA_3) {
-            return translateBatchWithGoogleGemma(batch, batchText);
-        } else {
-            return translateBatchWithOllama(batch, batchText);
-        }
+        // Usar Google Gemma 3 por padrão
+        return translateBatchWithGoogleGemma(batch, batchText);
     }
     
     /**
-     * Traduz usando Ollama (método original)
+     * Traduz usando API Google (método removido)
      */
-    private static List<TranslatedSegment> translateBatchWithOllama(List<TranscriptionSegment> batch, String batchText) throws IOException, InterruptedException {
-        Exception lastException = null;
-        
-        // Tentar com cada modelo
-        for (String model : PREFERRED_OLLAMA_MODELS) {
-            for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-                try {
-                    String translatedBatch = callOllamaTranslation(batchText, model);
-                    List<TranslatedSegment> result = parseBatchResult(batch, translatedBatch);
-                    
-                    // Não validar aqui - validação só no final para evitar re-processar batches
-                    return result;
-                    
-                } catch (Exception e) {
-                    lastException = e;
-                    logger.warning("⚠️ Falha tentativa " + attempt + " com " + model + ": " + e.getMessage());
-                    
-                    // 🚨 DETECÇÃO DE TIMEOUT/ERRO DE MEMÓRIA
-                    String errorMsg = e.getMessage().toLowerCase();
-                    if (errorMsg.contains("28") || errorMsg.contains("timeout") || 
-                        errorMsg.contains("memory") || errorMsg.contains("cuda")) {
-                        logger.severe("🔥 Erro crítico detectado (timeout/memória): " + e.getMessage());
-                        // Propagar exception para ativar recuperação automática
-                        throw new IOException("Erro crítico Ollama: " + e.getMessage(), e);
-                    }
-                    
-                    if (attempt < MAX_RETRIES) {
-                        Thread.sleep(1000); // Pausa antes de retry
-                    }
-                }
-            }
-        }
-        
-        // Se chegou aqui, todas tentativas falharam - propagar para ativar recuperação
-        String errorMsg = lastException != null ? lastException.getMessage() : "Erro desconhecido";
-        logger.severe("❌ TODAS AS TENTATIVAS FALHARAM - ativando recuperação automática");
-        throw new IOException("Falha completa na tradução: " + errorMsg, lastException);
-    }
     
     /**
      * Traduz usando Google Gemma 3 27B API
@@ -702,40 +627,8 @@ public class Translation {
     }
     
     /**
-     * Chama API do Ollama com prompt limpo e direto
+     * Chama API Google com prompt limpo e direto
      */
-    private static String callOllamaTranslation(String text, String model) throws IOException, InterruptedException {
-        String prompt = buildCleanPrompt(text);
-        String payload = buildOllamaPayload(model, prompt);
-        
-        ProcessBuilder pb = new ProcessBuilder(
-            "curl", "-s", "-X", "POST", OLLAMA_API_URL,
-            "-H", "Content-Type: application/json",
-            "-d", payload,
-            "--max-time", String.valueOf(TIMEOUT_SECONDS)
-        );
-        
-        Process process = pb.start();
-        
-        StringBuilder response = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-        }
-        
-        if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            process.destroyForcibly();
-            throw new IOException("Timeout na tradução");
-        }
-        
-        if (process.exitValue() != 0) {
-            throw new IOException("Erro na API Ollama: " + process.exitValue());
-        }
-        
-        return parseOllamaResponse(response.toString());
-    }
     
     /**
      * Prompt DINÂMICO para dublagem sincronizada de cursos de programação
@@ -756,50 +649,7 @@ public class Translation {
                "- Respond with same [number] format but REMOVE the timestamp from your answer\n\n" + text;
     }
     
-    private static String buildOllamaPayload(String model, String prompt) {
-        // Escapar JSON corretamente
-        String escapedPrompt = prompt
-            .replace("\\", "\\\\")  // Escape backslashes first
-            .replace("\"", "\\\"")  // Escape quotes
-            .replace("\n", "\\n")   // Escape newlines
-            .replace("\r", "\\r")   // Escape carriage returns
-            .replace("\t", "\\t");  // Escape tabs
-            
-        return String.format(Locale.US,
-            "{\"model\":\"%s\",\"prompt\":\"%s\",\"stream\":false,\"options\":{\"temperature\":%.1f}}",
-            model, 
-            escapedPrompt,
-            TEMPERATURE
-        );
-    }
     
-    private static String parseOllamaResponse(String response) {
-        try {
-            // Parse simples do JSON response
-            int start = response.indexOf("\"response\":\"") + 12;
-            int end = response.indexOf("\",\"done\":");
-            if (end == -1) end = response.indexOf("\",\"");
-            if (end == -1) end = response.length() - 1;
-            
-            if (start > 11 && end > start) {
-                String content = response.substring(start, end)
-                    .replace("\\n", "\n")
-                    .replace("\\\"", "\"")
-                    .replace("\\\\", "\\")
-                    .replace("\\u003c", "<")
-                    .replace("\\u003e", ">");
-                
-                // Remover tags <think> do DeepSeek
-                content = content.replaceAll("(?s)<think>.*?</think>\\s*", "").trim();
-                
-                return content;
-            }
-        } catch (Exception e) {
-            logger.warning("Erro parseando resposta: " + e.getMessage());
-        }
-        
-        return "";
-    }
     
     /**
      * Chama a API do Google Gemma 3 27B para tradução
@@ -1205,30 +1055,9 @@ public class Translation {
             } catch (Exception e) {
                 logger.warning(String.format("⚠️ Falha re-traduzindo com Google Gemma 3: %s", e.getMessage()));
             }
-        } else {
-            // Re-traduzir com Ollama (método original)
-            for (String model : PREFERRED_OLLAMA_MODELS) {
-                try {
-                    String response = callOllamaTranslation(prompt, model);
-                    String cleanedResponse = response.trim();
-                    
-                    // Limpar resposta (remover possíveis numerações ou prefixos)
-                    cleanedResponse = cleanedResponse.replaceAll("^\\[?\\d+\\]?\\.?\\s*", "");
-                    cleanedResponse = cleanedResponse.replaceAll("^(Tradução:|Resposta:)\\s*", "");
-                    
-                    if (!cleanedResponse.isEmpty() && !isTextUntranslated(originalText, cleanedResponse)) {
-                        return cleanedResponse;
-                    }
-                    
-                } catch (Exception e) {
-                    logger.fine(String.format("Falha re-traduzindo com %s: %s", model, e.getMessage()));
-                }
-            }
         }
         
-        // Se todos os modelos falharam, retornar texto original
-        logger.warning("Todos os modelos falharam na re-tradução individual, mantendo original");
-        return originalText;
+        return originalText; // Se tudo falhar, retorna texto original
     }
     
     // =========== MÉTODOS DE SAÍDA ===========

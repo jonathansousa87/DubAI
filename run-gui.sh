@@ -2,6 +2,7 @@
 
 echo "🎬 DubAI - Sistema Profissional de Dublagem Automática"
 echo "======================================================="
+echo "🤖 Powered by Google Gemma 3 27B API + Sistema Inteligente de Pronunciação"
 echo ""
 
 # Verificar se o Maven está instalado
@@ -11,26 +12,30 @@ if ! command -v mvn &> /dev/null; then
     exit 1
 fi
 
-# Verificar se o Ollama está instalado e rodando
-if ! command -v ollama &> /dev/null; then
-    echo "❌ ERRO: Ollama não está instalado"
-    echo "   Instale em: https://ollama.ai"
-    exit 1
+# Verificar dependências essenciais
+echo "🔍 Verificando dependências..."
+
+# FFmpeg
+if ! command -v ffmpeg &> /dev/null; then
+    echo "⚠️  FFmpeg não encontrado - necessário para processamento de vídeo"
 fi
 
-# Verificar se o Ollama está rodando
-if ! ollama list &> /dev/null; then
-    echo "❌ ERRO: Ollama não está rodando"
-    echo "   Execute: systemctl start ollama"
-    echo "   Ou: ollama serve"
-    exit 1
+# Piper TTS
+if [ ! -f "/home/kadabra/.local/bin/piper" ]; then
+    echo "⚠️  Piper TTS não encontrado em ~/.local/bin/piper - necessário para síntese de voz"
 fi
 
-echo "✅ Verificações passaram - iniciando interface gráfica..."
+echo ""
+echo "✅ Verificações concluídas - iniciando interface gráfica..."
+echo "🎯 Funcionalidades ativas:"
+echo "   - Tradução com Google Gemma 3 27B API"
+echo "   - Sistema inteligente de pronunciação (200+ termos técnicos)"
+echo "   - Timestamps precisos para dublagem natural"
+echo "   - Suporte completo: Java, Spring, React, Next.js, TypeScript, n8n, MCP, IA"
 echo ""
 
-# Compilar e executar
-mvn compile -q && java -cp target/classes org.Main
+# Compilar e executar a interface gráfica
+mvn compile -q && java -cp "target/classes:target/dependency/*" org.DubAIGUI
 
 echo ""
 echo "🎉 DubAI finalizado!"

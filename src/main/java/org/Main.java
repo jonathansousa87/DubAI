@@ -206,15 +206,14 @@ public class Main {
                 checkPiperAvailable(), ioExecutor);
 
 
-        CompletableFuture<Boolean> ollamaCheck = CompletableFuture.supplyAsync(() ->
-                checkOllamaAvailable(), ioExecutor);
+        // Removed Ollama availability check - using only Google Gemma 3 API
 
         try {
             boolean ffmpeg = ffmpegCheck.get(10, TimeUnit.SECONDS);
             boolean ffprobe = ffprobeCheck.get(10, TimeUnit.SECONDS);
             boolean nvidia = nvidiaCheck.get(10, TimeUnit.SECONDS);
             boolean piper = piperCheck.get(5, TimeUnit.SECONDS);
-            boolean ollama = ollamaCheck.get(15, TimeUnit.SECONDS);
+            // Removed Ollama check
 
             if (!ffmpeg || !ffprobe) {
                 showErrorDialog("FFmpeg/FFprobe não encontrado",
@@ -238,19 +237,7 @@ public class Main {
                 return false;
             }
 
-            if (!ollama) {
-                int choice = JOptionPane.showConfirmDialog(null,
-                        "Ollama não disponível. Usar Google Translate?",
-                        "Ollama Indisponível",
-                        JOptionPane.YES_NO_OPTION,
-                        JOptionPane.QUESTION_MESSAGE);
-
-                if (choice == JOptionPane.YES_OPTION) {
-                    translationMethod = "Google";
-                } else {
-                    return false;
-                }
-            }
+            // Removed Ollama availability check - using only Google Gemma 3 API
 
             System.out.println("✅ Dependências validadas para pipeline consolidado");
             return true;
@@ -390,8 +377,7 @@ public class Main {
                     // Limpeza tradicional como backup
                     ClearMemory.runClearNameThenThreshold("pre_video_" + (i + 1) + "_cleanup");
                     
-                    // Restart Ollama
-                    ClearMemory.restartOllamaService();
+                    // Removed Ollama restart
                     Thread.sleep(3000);
                     
                     System.out.println("✅ CUDA completamente limpo para vídeo " + (i + 1));
@@ -418,8 +404,7 @@ public class Main {
                     // Limpeza tradicional como backup
                     ClearMemory.runClearNameThenThreshold("post_video_cleanup");
                     
-                    // Restart Ollama
-                    ClearMemory.restartOllamaService();
+                    // Removed Ollama restart
                     Thread.sleep(3000);
                     
                     System.out.println("✅ CUDA completamente limpo - próximo vídeo garantido");
@@ -444,8 +429,7 @@ public class Main {
                     // Limpeza tradicional como backup
                     ClearMemory.runClearNameThenThreshold("error_video_cleanup");
                     
-                    // Restart Ollama
-                    ClearMemory.restartOllamaService();
+                    // Removed Ollama restart
                     Thread.sleep(3000);
                     
                     System.out.println("✅ CUDA limpo após erro - próximo vídeo pode prosseguir");
@@ -589,8 +573,7 @@ public class Main {
             // Limpeza tradicional como backup
             ClearMemory.runClearNameThenThreshold("pre_whisper_intensive");
             
-            // Restart Ollama
-            ClearMemory.restartOllamaService();
+            // Removed Ollama restart
             Thread.sleep(5000);
             
             System.out.println("✅ CUDA completamente limpo para Whisper");
@@ -619,9 +602,7 @@ public class Main {
             throw e;
         }
         
-        // Reiniciar Ollama após transcrição para estar disponível para tradução
-        System.out.println("🔄 Reiniciando Ollama para tradução...");
-        ClearMemory.restartOllamaService();
+        // Removed Ollama restart - using only Google Gemma 3 API
     }
 
     private static void translationStepWithTimingControl(ProcessingConfig config) throws Exception {
@@ -644,7 +625,7 @@ public class Main {
         System.out.println("🧹 Limpeza preventiva da GPU antes da tradução...");
         try {
             ClearMemory.runClearNameThenThreshold("pre_translation");
-            ClearMemory.restartOllamaService(); // Reiniciar container Ollama
+            // Removed Ollama restart
             Thread.sleep(3000); // Aguardar estabilização
         } catch (Exception e) {
             System.err.println("⚠️ Erro na limpeza pré-tradução: " + e.getMessage());
@@ -657,35 +638,30 @@ public class Main {
 
         if ("LLama".equalsIgnoreCase(method)) {
             try {
-                // INICIAR Ollama Docker APENAS para tradução
-                ClearMemory.startOllamaForTranslation();
+                // Removed Ollama Docker management
                 
                 // Usar Translation com TSV otimizado!
                 System.out.println("🧠 Usando Translation com TSV otimizado...");
                 Translation.translateFile(inputTsvFile, outputVttFile, method);
                 System.out.println("✅ Tradução TSV → VTT concluída com sucesso!");
                 
-                // PARAR Ollama Docker imediatamente após tradução
-                ClearMemory.stopOllamaAfterTranslation();
+                // Removed Ollama Docker management
                 
             } catch (Exception e) {
                 System.out.println("⚠️ Erro na tradução TSV, tentando VTT fallback: " + e.getMessage());
                 System.out.println("🔄 Tentando fallback com VTT...");
                 
                 try {
-                    // INICIAR Ollama Docker para fallback
-                    ClearMemory.startOllamaForTranslation();
+                    // Removed Ollama Docker management
                     
                     // Fallback para VTT se TSV falhar
                     String inputVttFile = config.outputDir() + "/transcription.vtt";
                     Translation.translateFile(inputVttFile, outputVttFile, method);
                     System.out.println("✅ Tradução VTT fallback concluída");
                     
-                    // PARAR Ollama Docker após fallback
-                    ClearMemory.stopOllamaAfterTranslation();
+                    // Removed Ollama Docker management
                 } catch (Exception e2) {
-                    // PARAR Ollama Docker mesmo em caso de erro
-                    ClearMemory.stopOllamaAfterTranslation();
+                    // Removed Ollama Docker management
                     System.out.println("❌ Todos os métodos de tradução falharam: " + e2.getMessage());
                     throw e2;
                 }
@@ -711,7 +687,7 @@ public class Main {
             // Stats avançadas não disponíveis - silencioso
         }
 
-        // 🧹 LIMPEZA CUDA REAL PÓS-TRADUÇÃO (liberar memória do Ollama)
+        // 🧹 LIMPEZA CUDA REAL PÓS-TRADUÇÃO
         System.out.println("🧹 Limpeza CUDA REAL após tradução...");
         try {
             // FORÇA LIMPEZA CUDA - mata processos Python/PyTorch
@@ -720,8 +696,7 @@ public class Main {
             // Limpeza tradicional como backup
             ClearMemory.runClearNameThenThreshold("post_translation");
             
-            // Restart Ollama
-            ClearMemory.restartOllamaService();
+            // Removed Ollama restart
             Thread.sleep(2000);
             
             System.out.println("✅ CUDA limpo após tradução");
@@ -752,14 +727,7 @@ public class Main {
                 System.out.printf("🎯 Duração alvo (VTT): %.3fs\n", targetDuration);
             }
 
-            // === GARANTIR QUE OLLAMA ESTÁ PARADO ANTES DO TTS ===
-            System.out.println("🧹 Garantindo que Ollama está parado antes do TTS...");
-            try {
-                ClearMemory.stopOllamaAfterTranslation();
-                System.out.println("✅ Ollama confirmadamente parado - VRAM livre para TTS");
-            } catch (Exception e) {
-                System.out.println("⚠️ Erro ao garantir parada do Ollama: " + e.getMessage());
-            }
+            // Removed Ollama management - using only Google Gemma 3 API
             
             // === PROCESSAR TTS COM PIPER ===
             System.out.println("🎙️ Usando Piper TTS");
@@ -1467,18 +1435,7 @@ public class Main {
         }
     }
 
-    private static boolean checkOllamaAvailable() {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("curl", "-s", "--max-time", "5",
-                    "http://localhost:11434/api/tags");
-            Process process = pb.start();
-            boolean finished = process.waitFor(8, TimeUnit.SECONDS);
-
-            return finished && process.exitValue() == 0;
-        } catch (Exception e) {
-            return false;
-        }
-    }
+    // Removed checkOllamaAvailable method - using only Google Gemma 3 API
 
     private static boolean checkPiperAvailable() {
         String[] possiblePaths = {
@@ -1657,9 +1614,7 @@ public class Main {
                         try { Whisper.shutdown(); } catch (Exception e) { /* ignore */ }
                     }),
 
-                    CompletableFuture.runAsync(() -> {
-                        try { ClearMemory.shutdownExecutor(); } catch (Exception e) { /* ignore */ }
-                    }),
+                    // Removed Ollama executor shutdown - no longer needed
 
                     CompletableFuture.runAsync(() -> {
                         try { TTSUtils.shutdown(); } catch (Exception e) { /* ignore */ }
