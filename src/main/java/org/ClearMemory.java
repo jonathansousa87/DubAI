@@ -298,8 +298,8 @@ public class ClearMemory {
             
             // Caminhos comuns de cache de modelos AI
             String[] cachePaths = {
-                "/tmp/cache/hub/models--Systran--faster-whisper-large-v3",
-                "/tmp/cache/xet", 
+                "/tmp/cache/hub",  // LIMPA TODO O HUB (modelos Whisper, etc)
+                "/tmp/cache/xet",
                 "/tmp/cache/hub/checkpoints",
                 "/tmp/.cache",
                 "/tmp/huggingface_cache",

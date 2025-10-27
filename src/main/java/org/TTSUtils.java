@@ -93,6 +93,11 @@ public class TTSUtils {
 
     private static final Logger logger = Logger.getLogger(TTSUtils.class.getName());
 
+    // Configuração do engine TTS
+    private static boolean useKokoroTTS = false;
+    private static KokoroTTS.VozPTBR kokoroVoice = KokoroTTS.VozPTBR.HEART_FEMININO;
+    private static KokoroTTS.VozPTBR[] kokoroVoiceCombination = null; // Null = modo de voz única
+
     private static AudioFormat cachedPiperFormat = null;
     private static final Object formatLock = new Object();
 
@@ -1551,76 +1556,82 @@ public class TTSUtils {
      */
     private static boolean generateWithNaturalSpeedAndSilence(OptimizedSegment segment) {
         try {
-            // Gerar áudio com scale natural (próximo de 1.0)
-            double naturalScale = Math.max(0.9, Math.min(1.1, 1.0));
-            
+            double naturalScale = 1.0; // Para velocidade natural, usamos a escala padrão 1.0
             Path naturalAudioFile = OUTPUT_DIR.resolve("natural_" + segment.rawAudioFile);
-            Path modelToUse = Files.exists(PIPER_MODEL_PRIMARY) ? PIPER_MODEL_PRIMARY : PIPER_MODEL_FALLBACK;
-            
-            // Comando Piper com novo formato
-            ProcessBuilder pb = new ProcessBuilder(
-                    "piper",
-                    "--output", naturalAudioFile.toString(),
-                    "--length-scale", String.format(Locale.US, "%.6f", naturalScale),
-                    segment.cleanText
-            );
 
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-
-            // Fix: No need to write to stdin - text is passed as command line argument
-
-            boolean finished = process.waitFor(30, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                return false;
-            }
-
-            // Check if file was generated successfully despite non-zero exit code
-            boolean fileGenerated = Files.exists(naturalAudioFile) && Files.size(naturalAudioFile) >= 256;
-            
-            if (!fileGenerated) {
-                if (process.exitValue() != 0) {
-                    logger.warning("⚠️ Piper geração natural falhou, exit code: " + process.exitValue());
+            // ======================================================================
+            // LÓGICA CORRIGIDA: Respeitar a seleção do motor TTS
+            // ======================================================================
+            if (useKokoroTTS) {
+                logger.info("... gerando áudio natural com Kokoro...");
+                if (kokoroVoiceCombination != null && kokoroVoiceCombination.length >= 2) {
+                    KokoroTTS.generateAudioWithCombinedVoices(
+                            segment.cleanText,
+                            naturalAudioFile,
+                            naturalScale,
+                            kokoroVoiceCombination
+                    );
+                } else {
+                    KokoroTTS.generateAudio(
+                            segment.cleanText,
+                            naturalAudioFile,
+                            naturalScale,
+                            kokoroVoice
+                    );
                 }
-                return false;
+            } else {
+                logger.info("... gerando áudio natural com Piper...");
+                Path modelToUse = Files.exists(PIPER_MODEL_PRIMARY) ? PIPER_MODEL_PRIMARY : PIPER_MODEL_FALLBACK;
+                ProcessBuilder pb = new ProcessBuilder(
+                        "piper",
+                        "--output", naturalAudioFile.toString(),
+                        "--length-scale", String.format(Locale.US, "%.6f", naturalScale),
+                        segment.cleanText
+                );
+                pb.redirectErrorStream(true);
+                Process process = pb.start();
+                boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+                if (!finished) {
+                    process.destroyForcibly();
+                    return false;
+                }
+                boolean fileGenerated = Files.exists(naturalAudioFile) && Files.size(naturalAudioFile) >= 256;
+                if (!fileGenerated) {
+                    if (process.exitValue() != 0) {
+                        logger.warning("⚠️ Piper (geração natural) falhou, exit code: " + process.exitValue());
+                    }
+                    return false;
+                }
             }
+            // ======================================================================
+            // FIM DA CORREÇÃO
+            // ======================================================================
 
-            // Medir duração do áudio natural
             double naturalAudioDuration = measureAudioDurationAccurate(naturalAudioFile);
-            
-            // Calcular silêncio necessário
             double silenceNeeded = NaturalTimingStrategy.calculateSilenceComplement(segment.vttDuration, naturalAudioDuration);
-            
+
             if (silenceNeeded > 0.05) {
-                // Criar arquivo final com áudio + silêncio
                 Path finalFile = OUTPUT_DIR.resolve(segment.finalAudioFile);
                 Path silenceFile = OUTPUT_DIR.resolve("silence_" + segment.index + ".wav");
-                
-                // Gerar silêncio
+
                 generateSilence(silenceNeeded, silenceFile);
-                
-                // Concatenar áudio + silêncio
                 concatenateAudioFiles(naturalAudioFile, silenceFile, finalFile);
-                
-                // Cleanup
+
                 Files.deleteIfExists(naturalAudioFile);
                 Files.deleteIfExists(silenceFile);
-                
+
                 segment.finalAudioDuration = naturalAudioDuration + silenceNeeded;
                 segment.recordFinalResult(segment.finalAudioDuration, true, segment.finalAudioFile);
-                
                 return true;
             } else {
-                // Apenas copiar o áudio natural
                 Files.move(naturalAudioFile, OUTPUT_DIR.resolve(segment.finalAudioFile), StandardCopyOption.REPLACE_EXISTING);
                 segment.finalAudioDuration = naturalAudioDuration;
                 segment.recordFinalResult(segment.finalAudioDuration, false, segment.finalAudioFile);
                 return true;
             }
-            
+
         } catch (Exception e) {
-            logger.warning("Erro gerando áudio com complemento de silêncio: " + e.getMessage());
+            logger.log(Level.WARNING, "Erro gerando áudio com complemento de silêncio: " + e.getMessage(), e);
             return false;
         }
     }
@@ -1683,64 +1694,129 @@ public class TTSUtils {
                                                      OptimizedCalibration calibration) throws IOException, InterruptedException {
 
         Path outputFile = OUTPUT_DIR.resolve(segment.rawAudioFile);
-        Path modelToUse = Files.exists(PIPER_MODEL_PRIMARY) ? PIPER_MODEL_PRIMARY : PIPER_MODEL_FALLBACK;
 
         ttsSemaphore.acquire();
         try {
-            // Fix: Piper wrapper script expects text as command line argument, not stdin
-            ProcessBuilder pb = new ProcessBuilder(
-                    "piper",
-                    "--output", outputFile.toString(),
-                    "--length-scale", String.format(Locale.US, "%.6f", segment.currentLengthScale),
-                    segment.cleanText
-            );
+            // NOVA PARTE: Mecanismo de retry para Kokoro (até 4x com backoff)
+            boolean kokoroSuccess = false;
+            if (useKokoroTTS) {
+                int maxRetries = 8;  // 5 tentativas
+                int retryCount = 0;
+                long baseDelay = 3000;  // Delay base: 2 segundos (em ms)
 
-            // DEBUG: Log the exact command being executed
-            logger.info(String.format("🔧 Executando comando Piper: %s", 
-                String.join(" ", pb.command())));
-            logger.info(String.format("📝 Texto: '%s'", segment.cleanText));
-            logger.info(String.format("📄 Output: %s", outputFile.toString()));
+                while (retryCount < maxRetries && !kokoroSuccess) {
+                    try {
+                        if (KokoroTTS.isAvailable()) {
+                            logger.info(String.format("🚀 Tentativa Kokoro %d/%d: voz=%s, lengthScale=%.3f",
+                                    retryCount + 1, maxRetries, kokoroVoice.getDisplayName(), segment.currentLengthScale));
+                            logger.fine(String.format("📝 Texto: '%s'", segment.cleanText));
 
-            pb.environment().put("OMP_NUM_THREADS", "2");
-            pb.environment().put("TMPDIR", "/home/kadabra/tmp"); // Evitar /tmp cheio
-            pb.redirectErrorStream(true);
+                            if (kokoroVoiceCombination != null && kokoroVoiceCombination.length >= 2) {
+                                // Modo de combinação de vozes
+                                KokoroTTS.generateAudioWithCombinedVoices(
+                                        segment.cleanText,
+                                        outputFile,
+                                        segment.currentLengthScale,
+                                        kokoroVoiceCombination
+                                );
+                            } else {
+                                // Modo de voz única
+                                KokoroTTS.generateAudio(
+                                        segment.cleanText,
+                                        outputFile,
+                                        segment.currentLengthScale,
+                                        kokoroVoice
+                                );
+                            }
 
-            Process process = pb.start();
+                            // Se chegou aqui sem exceção, sucesso!
+                            kokoroSuccess = true;
+                            logger.info(String.format("✅ Kokoro sucesso na tentativa %d/%d", retryCount + 1, maxRetries));
+                        } else {
+                            logger.warning(String.format("⚠️ Kokoro indisponível na tentativa %d/%d - pulando retry", retryCount + 1, maxRetries));
+                            throw new IOException("Kokoro indisponível");
+                        }
+                    } catch (Exception e) {  // Captura qualquer falha na geração (ex.: timeout, GPU error)
+                        retryCount++;
+                        logger.warning(String.format("❌ Falha Kokoro tentativa %d/%d: %s", retryCount, maxRetries, e.getMessage()));
 
-            // Capturar output do processo para debug
-            StringBuilder processOutput = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    processOutput.append(line).append("\n");
+                        if (retryCount < maxRetries) {
+                            // Backoff exponencial: delay = base * 2^(retry-1)
+                            long delay = baseDelay * (1L << (retryCount - 1));  // 2s, 4s, 8s, 16s
+                            logger.info(String.format("⏳ Aguardando %dms para retry %d/%d (backoff para recuperação Kokoro)...", delay, retryCount + 1, maxRetries));
+                            Thread.sleep(delay);
+                        } else {
+                            logger.warning("❌ Todas as 4 tentativas Kokoro falharam - fallback para Piper");
+                        }
+                    }
                 }
             }
 
-            boolean finished = process.waitFor(90, TimeUnit.SECONDS);
+            // NOVA PARTE FIM: Se Kokoro falhou em todas as tentativas, ou se não usa Kokoro, vai para Piper
+            if (!kokoroSuccess) {
+                // Fallback para Piper (código original)
+                if (useKokoroTTS) {
+                    logger.warning("⚠️ Kokoro não disponível após retries, usando Piper como fallback");
+                }
 
-            if (!finished) {
-                process.destroyForcibly();
-                logger.warning(String.format("⏱️ Timeout Piper. Output: %s", processOutput.toString()));
-                throw new IOException("Timeout TTS otimizado");
+                Path modelToUse = Files.exists(PIPER_MODEL_PRIMARY) ? PIPER_MODEL_PRIMARY : PIPER_MODEL_FALLBACK;
+
+                // Fix: Piper wrapper script expects text as command line argument, not stdin
+                ProcessBuilder pb = new ProcessBuilder(
+                        "piper",
+                        "--output", outputFile.toString(),
+                        "--length-scale", String.format(Locale.US, "%.6f", segment.currentLengthScale),
+                        segment.cleanText
+                );
+
+                // DEBUG: Log the exact command being executed
+                logger.info(String.format("🔧 Executando comando Piper: %s",
+                        String.join(" ", pb.command())));
+                logger.info(String.format("📝 Texto: '%s'", segment.cleanText));
+                logger.info(String.format("📄 Output: %s", outputFile.toString()));
+
+                pb.environment().put("OMP_NUM_THREADS", "2");
+                pb.environment().put("TMPDIR", "/home/kadabra/tmp"); // Evitar /tmp cheio
+                pb.redirectErrorStream(true);
+
+                Process process = pb.start();
+
+                // Capturar output do processo para debug
+                StringBuilder processOutput = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        processOutput.append(line).append("\n");
+                    }
+                }
+
+                boolean finished = process.waitFor(90, TimeUnit.SECONDS);
+
+                if (!finished) {
+                    process.destroyForcibly();
+                    logger.warning(String.format("⏱️ Timeout Piper. Output: %s", processOutput.toString()));
+                    throw new IOException("Timeout TTS otimizado");
+                }
+
+                int exitCode = process.exitValue();
+
+                // Check if file was generated successfully despite non-zero exit code
+                boolean fileGenerated = Files.exists(outputFile) && Files.size(outputFile) >= 256;
+
+                if (exitCode != 0 && !fileGenerated) {
+                    logger.warning(String.format("❌ Piper exit code: %d. Output: %s", exitCode, processOutput.toString()));
+                    throw new IOException("Piper TTS falhou");
+                } else if (exitCode != 0 && fileGenerated) {
+                    logger.info(String.format("⚠️ Piper exit code: %d, mas arquivo gerado com sucesso (%d bytes)",
+                            exitCode, Files.size(outputFile)));
+                }
             }
 
-            int exitCode = process.exitValue();
-            
-            // Check if file was generated successfully despite non-zero exit code
-            boolean fileGenerated = Files.exists(outputFile) && Files.size(outputFile) >= 256;
-            
-            if (exitCode != 0 && !fileGenerated) {
-                logger.warning(String.format("❌ Piper exit code: %d. Output: %s", exitCode, processOutput.toString()));
-                throw new IOException("Piper TTS falhou");
-            } else if (exitCode != 0 && fileGenerated) {
-                logger.info(String.format("⚠️ Piper exit code: %d, mas arquivo gerado com sucesso (%d bytes)", 
-                           exitCode, Files.size(outputFile)));
-            }
-
+            // Verificações comuns para ambos os engines (código original continua igual)
             if (!Files.exists(outputFile)) {
                 throw new IOException("Arquivo TTS não foi gerado");
             }
-            
+
             // Verificação menos restritiva para frases curtas
             if (Files.size(outputFile) < 256) {
                 throw new IOException("Arquivo TTS muito pequeno (< 256 bytes)");
@@ -1989,92 +2065,87 @@ public class TTSUtils {
      */
     private static boolean forceGenerateSegmentAudio(OptimizedSegment segment, AudioFormat piperFormat) {
         try {
-            logger.info(String.format("🔄 Força geração segmento: \"%.40s...\"", segment.cleanText.replace("\n", " ")));
-            
-            // Configurações mais flexíveis para emergência
-            double emergencyScale = Math.max(0.8, Math.min(2.0, segment.vttDuration / 3.0)); // Scale baseado na duração esperada
+            logger.info(String.format("🔄 Forçando geração para segmento: \"%.40s...\"", segment.cleanText.replace("\n", " ")));
+
+            double emergencyScale = Math.max(0.8, Math.min(2.0, segment.vttDuration / 3.0));
             segment.currentLengthScale = emergencyScale;
-            
             Path outputFile = OUTPUT_DIR.resolve(segment.rawAudioFile);
-            Path modelToUse = Files.exists(PIPER_MODEL_PRIMARY) ? PIPER_MODEL_PRIMARY : PIPER_MODEL_FALLBACK;
 
             ttsSemaphore.acquire();
             try {
-                ProcessBuilder pb = new ProcessBuilder(
-                        "piper",
-                        "--output", outputFile.toString(),
-                        "--length-scale", String.format(Locale.US, "%.6f", emergencyScale),
-                        segment.cleanText
-                );
-
-                pb.environment().put("OMP_NUM_THREADS", "2");
-                pb.redirectErrorStream(true);
-
-                Process process = pb.start();
-
-                // Fix: No need to write to stdin - text is passed as command line argument
-
-                boolean finished = process.waitFor(120, TimeUnit.SECONDS); // Mais tempo
-
-                if (!finished) {
-                    process.destroyForcibly();
-                    logger.warning("⚠️ Timeout na força geração");
-                    return false;
+                // ======================================================================
+                // LÓGICA CORRIGIDA: Respeitar a seleção do motor TTS
+                // ======================================================================
+                if (useKokoroTTS) {
+                    logger.info("... forçando geração com Kokoro...");
+                    if (kokoroVoiceCombination != null && kokoroVoiceCombination.length >= 2) {
+                        KokoroTTS.generateAudioWithCombinedVoices(segment.cleanText, outputFile, emergencyScale, kokoroVoiceCombination);
+                    } else {
+                        KokoroTTS.generateAudio(segment.cleanText, outputFile, emergencyScale, kokoroVoice);
+                    }
+                } else {
+                    logger.info("... forçando geração com Piper...");
+                    Path modelToUse = Files.exists(PIPER_MODEL_PRIMARY) ? PIPER_MODEL_PRIMARY : PIPER_MODEL_FALLBACK;
+                    ProcessBuilder pb = new ProcessBuilder(
+                            "piper",
+                            "--output", outputFile.toString(),
+                            "--length-scale", String.format(Locale.US, "%.6f", emergencyScale),
+                            segment.cleanText
+                    );
+                    pb.environment().put("OMP_NUM_THREADS", "2");
+                    pb.redirectErrorStream(true);
+                    Process process = pb.start();
+                    boolean finished = process.waitFor(120, TimeUnit.SECONDS);
+                    if (!finished) {
+                        process.destroyForcibly();
+                        logger.warning("⚠️ Timeout na força geração (Piper)");
+                        return false;
+                    }
+                    boolean fileGenerated = Files.exists(outputFile) && Files.size(outputFile) >= 256;
+                    if (process.exitValue() != 0 && !fileGenerated) {
+                        logger.warning("⚠️ Piper falhou na força geração, exit code: " + process.exitValue());
+                        return false;
+                    }
                 }
-
-                // Check if file was generated successfully despite non-zero exit code
-                boolean fileGenerated = Files.exists(outputFile) && Files.size(outputFile) >= 256;
-                
-                if (process.exitValue() != 0 && !fileGenerated) {
-                    logger.warning("⚠️ Piper falhou na força geração, exit code: " + process.exitValue());
-                    return false;
-                } else if (process.exitValue() != 0 && fileGenerated) {
-                    logger.info("⚠️ Piper força geração exit code não-zero mas arquivo gerado com sucesso");
-                }
+                // ======================================================================
+                // FIM DA CORREÇÃO
+                // ======================================================================
 
                 if (!Files.exists(outputFile) || Files.size(outputFile) < 256) {
                     logger.warning("⚠️ Arquivo TTS inválido na força geração");
                     return false;
                 }
 
-                // Normalizar e medir
                 normalizeAudioToStandardFormat(outputFile);
                 double actualDuration = measureAudioDurationAccurate(outputFile);
-                
+
                 if (actualDuration <= 0) {
                     logger.warning("⚠️ Duração inválida na força geração");
                     return false;
                 }
 
-                // Análise básica de qualidade
                 AudioQualityMetrics quality = analyzeAudioQualityAdvanced(outputFile);
                 segment.recordRawResult(emergencyScale, actualDuration, quality);
-                
-                // Critérios mais flexíveis para aceitar
-                if (segment.hasVoice && segment.volumeLevel >= -50.0) { // Volume MUITO mais baixo aceitável
-                    // Copiar para final sem ajuste
+
+                if (segment.hasVoice && segment.volumeLevel >= -50.0) {
                     copyRawToFinal(segment);
                     segment.recordFinalResult(actualDuration, false, segment.finalAudioFile);
-                    
-                    logger.info(String.format("✅ Força geração bem-sucedida: %.3fs (%.1fdB)", 
-                        actualDuration, segment.volumeLevel));
+                    logger.info(String.format("✅ Força geração bem-sucedida: %.3fs (%.1fdB)", actualDuration, segment.volumeLevel));
                     return true;
                 }
-                
-                logger.warning(String.format("⚠️ Força geração com qualidade insuficiente: voz=%s, volume=%.1fdB", 
-                    segment.hasVoice, segment.volumeLevel));
+
+                logger.warning(String.format("⚠️ Força geração com qualidade insuficiente: voz=%s, volume=%.1fdB", segment.hasVoice, segment.volumeLevel));
                 return false;
 
             } finally {
                 ttsSemaphore.release();
             }
-            
+
         } catch (Exception e) {
             logger.log(Level.WARNING, "Erro na força geração de áudio", e);
             return false;
         }
     }
-
     /**
      * 🔇 GERAÇÃO DE SILÊNCIO DE ALTA QUALIDADE
      */
@@ -2676,6 +2747,7 @@ public class TTSUtils {
         result = result.replaceAll("(?i)\\bhaskell\\b", "ráscou");
         result = result.replaceAll("(?i)\\bocaml\\b", "ô camel");
         result = result.replaceAll("(?i)\\bdart\\b", "dart");
+        result = result.replaceAll("(?i)\\bNodeM\\b", "node");
         result = result.replaceAll("(?i)\\br\\b(?=\\s|$)", "ár"); // R language
         result = result.replaceAll("(?i)\\bmatlab\\b", "mátlábi");
         result = result.replaceAll("(?i)\\bjulia\\b", "júlia");
@@ -2685,11 +2757,11 @@ public class TTSUtils {
         result = result.replaceAll("(?i)\\bnim\\b", "ním");
         result = result.replaceAll("(?i)\\bcrystal\\b", "cristau");
         result = result.replaceAll("(?i)\\bv\\b(?=\\s+lang|\\s|$)", "ví"); // V language
-        
+
         // ============ PLATAFORMAS E FERRAMENTAS ============
         
         // Git e GitHub
-        result = result.replaceAll("(?i)\\bgithub\\b", "guítarrábi");
+        result = result.replaceAll("(?i)\\bgithub\\b", "guítirráb");
         result = result.replaceAll("(?i)\\bgitlab\\b", "guítilábi");
         result = result.replaceAll("(?i)\\bgitea\\b", "guítia");
         result = result.replaceAll("(?i)\\bbitbucket\\b", "bítibáqueti");
@@ -2894,7 +2966,8 @@ public class TTSUtils {
         result = result.replaceAll("(?i)\\btemperature\\b", "témperetiúr");
         result = result.replaceAll("(?i)\\btop\\s+p\\b", "tópi pí");
         result = result.replaceAll("(?i)\\btop\\s+k\\b", "tópi quêi");
-        
+        result = result.replaceAll("(?i)\\bclod\\s+k\\b", "claude");
+
         // DevOps
         result = result.replaceAll("(?i)\\bdocker\\b", "dôquer");
         result = result.replaceAll("(?i)\\bkubernetes\\b", "cubernítes");
@@ -2949,6 +3022,62 @@ public class TTSUtils {
     private static final Map<String, String> pronunciationCache = new ConcurrentHashMap<>();
     private static final Set<String> processedTexts = ConcurrentHashMap.newKeySet();
     private static boolean aiPronunciationEnabled = true; // Pode ser desabilitado se necessário
+    
+    // ============ CONTROLE DE MIXAGEM DE ÁUDIO ============
+    private static boolean mixBackgroundAudio = true; // Controla se deve mixar com accompaniment.wav
+    
+    /**
+     * Define se deve mixar áudio dublado com áudio de fundo
+     */
+    public static void setMixBackgroundAudio(boolean mix) {
+        mixBackgroundAudio = mix;
+        logger.info(mix ? "🎵 Mixagem de áudio de fundo ATIVADA" : "🎙️ Mixagem de áudio de fundo DESATIVADA");
+    }
+
+    /**
+     * Verifica se mixagem de áudio de fundo está ativada
+     */
+    public static boolean isMixBackgroundAudio() {
+        return mixBackgroundAudio;
+    }
+
+    /**
+     * Define qual engine TTS usar (Piper ou Kokoro)
+     */
+    public static void setUseKokoroTTS(boolean useKokoro) {
+        useKokoroTTS = useKokoro;
+        logger.info(useKokoro ? "🚀 Kokoro TTS ATIVADO (GPU)" : "💻 Piper TTS ATIVADO (CPU)");
+    }
+
+    /**
+     * Define qual voz Kokoro usar (modo de voz única)
+     */
+    public static void setKokoroVoice(KokoroTTS.VozPTBR voice) {
+        kokoroVoice = voice;
+        kokoroVoiceCombination = null; // Desabilitar modo de combinação
+        logger.info("🎤 Voz Kokoro selecionada: " + voice.getDisplayName());
+    }
+
+    /**
+     * Define múltiplas vozes Kokoro para combinar
+     */
+    public static void setKokoroVoiceCombination(KokoroTTS.VozPTBR... voices) {
+        if (voices == null || voices.length < 2) {
+            throw new IllegalArgumentException("É necessário pelo menos 2 vozes para combinar");
+        }
+        kokoroVoiceCombination = voices;
+        logger.info("🎭 Vozes Kokoro combinadas: " + String.join(" + ",
+            java.util.Arrays.stream(voices)
+                .map(KokoroTTS.VozPTBR::getDisplayName)
+                .toArray(String[]::new)));
+    }
+
+    /**
+     * Verifica se Kokoro TTS está ativado
+     */
+    public static boolean isUsingKokoroTTS() {
+        return useKokoroTTS;
+    }
     
     /**
      * Sistema AI de Pronunciação Dinâmica
@@ -3590,13 +3719,17 @@ public class TTSUtils {
         double resultDuration = measureAudioDurationAccurate(outputFile);
         logger.info(String.format("✅ CONCATENAÇÃO COPY concluída: %.3fs - QUALIDADE ORIGINAL PRESERVADA", resultDuration));
 
-        // ✅ PASSO 6: Mixar com accompaniment.wav se disponível
-        Path mixedOutputFile = mixWithAccompaniment(outputFile);
-        if (mixedOutputFile != null) {
-            // Substituir o arquivo original pelo mixado
-            Files.move(mixedOutputFile, outputFile, StandardCopyOption.REPLACE_EXISTING);
-            resultDuration = measureAudioDurationAccurate(outputFile);
-            logger.info(String.format("🎵 ÁUDIO MIXADO com accompaniment concluído: %.3fs", resultDuration));
+        // ✅ PASSO 6: Mixar com accompaniment.wav se disponível (baseado na configuração do usuário)
+        if (mixBackgroundAudio) {
+            Path mixedOutputFile = mixWithAccompaniment(outputFile);
+            if (mixedOutputFile != null) {
+                // Substituir o arquivo original pelo mixado
+                Files.move(mixedOutputFile, outputFile, StandardCopyOption.REPLACE_EXISTING);
+                resultDuration = measureAudioDurationAccurate(outputFile);
+                logger.info(String.format("🎵 ÁUDIO MIXADO com accompaniment concluído: %.3fs", resultDuration));
+            }
+        } else {
+            logger.info("🎙️ Mixagem de áudio de fundo desativada - usando apenas voz dublada");
         }
 
         return resultDuration;

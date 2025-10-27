@@ -2,7 +2,16 @@
   "permissions": {
     "allow": [
       "Bash(grep:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(mvn clean:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker cp:*)",
+      "Bash(java:*)",
+      "Bash(killall:*)",
+      "Bash(python3:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker rmi:*)"
     ],
     "deny": []
   }

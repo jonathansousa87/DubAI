@@ -1,0 +1,18 @@
+services:
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:v0.2.1
+    container_name: kokoro-container
+    restart: unless-stopped
+    ports:
+      - "8880:8880"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./output:/app/output
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

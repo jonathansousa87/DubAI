@@ -51,7 +51,9 @@ public class AudioUtils {
         System.out.printf("🎵 Extraindo áudio: %s -> %s\n",
                 inputVideo.getFileName(), outputAudio.getFileName());
 
-        Path tempAudio = outputAudio.getParent().resolve("temp_extracted.wav");
+        // Criar nome temporário único para evitar conflitos
+        String tempName = "temp_audio_" + System.currentTimeMillis() + ".wav";
+        Path tempAudio = outputAudio.getParent().resolve(tempName);
 
         try {
             // Extração com configurações otimizadas
@@ -734,5 +736,70 @@ public class AudioUtils {
             return String.format("AudioInfo[%.1fs, %dHz, %dch, %dk, %s, %s]",
                     duration, sampleRate, channels, bitRate/1000, codecName, getQualityDescription());
         }
+    }
+
+    /**
+     * Verifica se o vídeo tem stream de áudio
+     */
+    private static boolean hasAudioStream(Path videoFile) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("ffprobe", "-v", "quiet", "-show_streams", 
+                "-select_streams", "a", videoFile.toString());
+            Process process = pb.start();
+            
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line = reader.readLine();
+                boolean hasAudio = line != null && !line.trim().isEmpty();
+                process.waitFor();
+                return hasAudio;
+            }
+        } catch (Exception e) {
+            System.err.println("⚠️ Erro verificando áudio: " + e.getMessage());
+            return true; // Assume que tem áudio por segurança
+        }
+    }
+
+    /**
+     * Cria áudio silencioso com a mesma duração do vídeo
+     */
+    private static void createSilentAudio(Path videoFile, Path outputAudio) throws IOException, InterruptedException {
+        // Primeiro obter a duração do vídeo
+        double duration = getVideoDuration(videoFile);
+        
+        System.out.printf("🔇 Criando áudio silencioso de %.1fs para vídeo sem áudio\n", duration);
+        
+        ProcessBuilder pb = new ProcessBuilder(
+            "ffmpeg", "-y",
+            "-f", "lavfi",
+            "-i", String.format("anullsrc=channel_layout=stereo:sample_rate=%d", SAMPLE_RATE),
+            "-t", String.valueOf(duration),
+            "-acodec", "pcm_s16le",
+            outputAudio.toString()
+        );
+        
+        executeProcessBuilder(pb, "Criação de áudio silencioso");
+    }
+
+    /**
+     * Obtém duração do vídeo usando ffprobe
+     */
+    private static double getVideoDuration(Path videoFile) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("ffprobe", "-v", "quiet", "-show_entries", 
+                "format=duration", "-of", "csv=p=0", videoFile.toString());
+            Process process = pb.start();
+            
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line = reader.readLine();
+                if (line != null && !line.trim().isEmpty()) {
+                    return Double.parseDouble(line.trim());
+                }
+            }
+            process.waitFor();
+        } catch (Exception e) {
+            System.err.println("⚠️ Erro obtendo duração do vídeo: " + e.getMessage());
+        }
+        
+        return 10.0; // Fallback: 10 segundos
     }
 }
