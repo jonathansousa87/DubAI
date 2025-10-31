@@ -34,6 +34,20 @@ public class Whisper {
     private static final Semaphore transcriptionSemaphore = new Semaphore(2);
     private static final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
+    // HuggingFace Token para diarização (configurável via GUI)
+    private static String huggingFaceToken = null;
+
+    /**
+     * Define o HuggingFace Token para habilitar diarização
+     * @param token Token de acesso do HuggingFace
+     */
+    public static void setHuggingFaceToken(String token) {
+        huggingFaceToken = token;
+        if (token != null && !token.isEmpty()) {
+            logger.info("👥 HuggingFace Token configurado - diarização disponível");
+        }
+    }
+
     // Pattern para parsing VTT (suporta formatos MM:SS.mmm e HH:MM:SS.mmm)
     private static final Pattern VTT_TIMESTAMP_PATTERN = Pattern.compile(
             "^(?:(\\d{2}):(\\d{2}):(\\d{2})[.,](\\d{3})|(\\d{2}):(\\d{2})[.,](\\d{3}))\\s*-->\\s*(?:(\\d{2}):(\\d{2}):(\\d{2})[.,](\\d{3})|(\\d{2}):(\\d{2})[.,](\\d{3}))$"
@@ -141,7 +155,22 @@ public class Whisper {
      * Transcrição básica de áudio - gera VTT usando WhisperX
      */
     public static void transcribeAudio(String inputFile, String outputVtt) throws IOException, InterruptedException {
-        logger.info("🎯 Iniciando transcrição com WhisperX...");
+        transcribeAudio(inputFile, outputVtt, false, null, null);
+    }
+
+    /**
+     * Transcrição de áudio com opções de diarização
+     *
+     * @param inputFile     Arquivo de áudio de entrada
+     * @param outputVtt     Arquivo VTT de saída
+     * @param enableDiarization Habilitar diarização (separação de falantes)
+     * @param minSpeakers   Número mínimo de falantes (null = auto-detectar)
+     * @param maxSpeakers   Número máximo de falantes (null = auto-detectar)
+     */
+    public static void transcribeAudio(String inputFile, String outputVtt, boolean enableDiarization,
+                                      Integer minSpeakers, Integer maxSpeakers)
+            throws IOException, InterruptedException {
+        logger.info("🎯 Iniciando transcrição com WhisperX" + (enableDiarization ? " + diarização" : "") + "...");
 
         File outputFile = new File(outputVtt);
         String outputDir = outputFile.getParent();
@@ -155,7 +184,7 @@ public class Whisper {
             transcriptionSemaphore.acquire();
             try {
                 logger.info("🎤 Transcrevendo com WhisperX (" + model + ")...");
-                executeWhisperX(inputFile, model, tempWhisperVtt);
+                executeWhisperX(inputFile, model, tempWhisperVtt, enableDiarization, minSpeakers, maxSpeakers);
                 whisperSuccess = true;
                 logger.info("✅ WhisperX concluído");
                 break;
@@ -190,8 +219,8 @@ public class Whisper {
             logger.info("🔄 Reusando VTT existente: " + finalVtt);
             tempVtt = finalVtt; // Usar VTT existente
         } else {
-            // Só executar WhisperX se VTT não existe
-            transcribeAudio(inputFile, tempVtt);
+            // Executar WhisperX com diarização habilitada (se token disponível)
+            transcribeAudio(inputFile, tempVtt, true, null, null);
         }
 
         // Converte para TSV (formato preferido da Translation)
@@ -346,6 +375,22 @@ public class Whisper {
     }
 
     private static void executeWhisperX(String inputFile, String model, String outputVtt) throws IOException, InterruptedException {
+        executeWhisperX(inputFile, model, outputVtt, false, null, null);
+    }
+
+    /**
+     * Executa WhisperX com opções de diarização
+     *
+     * @param inputFile     Arquivo de áudio de entrada
+     * @param model         Modelo Whisper a usar
+     * @param outputVtt     Arquivo VTT de saída
+     * @param enableDiarization Habilitar diarização (separação de falantes)
+     * @param minSpeakers   Número mínimo de falantes (null = auto-detectar)
+     * @param maxSpeakers   Número máximo de falantes (null = auto-detectar)
+     */
+    private static void executeWhisperX(String inputFile, String model, String outputVtt,
+                                       boolean enableDiarization, Integer minSpeakers, Integer maxSpeakers)
+            throws IOException, InterruptedException {
         File outputFile = new File(outputVtt);
         String outputDir = outputFile.getParent();
         if (outputDir == null) outputDir = ".";
@@ -354,6 +399,19 @@ public class Whisper {
         String fillerPrompt = buildAdvancedFillerPrompt();
         logger.info("🎯 Usando prompt avançado para detecção de fillers e hesitações");
         logger.fine("   Prompt: " + fillerPrompt.substring(0, Math.min(100, fillerPrompt.length())) + "...");
+
+        // Usar HuggingFace token configurado se diarização está habilitada
+        String hfToken = null;
+        if (enableDiarization) {
+            hfToken = huggingFaceToken;
+            if (hfToken == null || hfToken.isEmpty()) {
+                logger.warning("⚠️ Diarização solicitada mas HuggingFace token não configurado! Continuando sem diarização.");
+                logger.warning("   Configure o token na interface DubAIGUI e salve.");
+                enableDiarization = false;
+            } else {
+                logger.info("👥 Diarização habilitada com HuggingFace token");
+            }
+        }
 
         // Limpar memória GPU agressivamente antes de iniciar
         logger.info("🧹 Limpando memória GPU antes da transcrição...");
@@ -364,33 +422,73 @@ public class Whisper {
             logger.warning("⚠️ Falha na limpeza GPU: " + e.getMessage());
         }
 
-        // Tentar com batch_size progressivamente menor em caso de OOM
+        // Tentar primeiro float16 (melhor qualidade), depois int8 (economia de memória)
         String[] computeTypes = {"float16", "int8"};
         int[] batchSizes = {8, 4, 1};
         IOException lastException = null;
 
-        for (int batchSize : batchSizes) {
-            try {
-                logger.info(String.format("🎤 Tentando WhisperX com batch_size=%d...", batchSize));
+        for (String computeType : computeTypes) {
+            logger.info(String.format("🔬 Tentando com compute_type=%s...", computeType));
 
-                String[] command = {
-                        "whisperx",
-                        "--model", model,
-                        "--device", "cuda",
-                        "--compute_type", "int8",  // 🔥 INT8 usa 75% menos memória que FP16!
-                        "--batch_size", String.valueOf(batchSize),
-                        "--output_dir", outputDir,
-                        "--output_format", "all",  // Gera VTT + JSON com word timestamps
-                        "--initial_prompt", fillerPrompt,  // Prompt para detectar fillers
-                        "--condition_on_previous_text", "False",  // 🔥 Desliga histórico (economiza RAM)
-                        "--no_align",  // 🔥 DESLIGA alinhamento (economiza ~2GB VRAM!)
-                        "--vad_onset", "0.3",  // VAD mais sensível (detecta hesitações)
-                        "--vad_offset", "0.3",  // VAD offset
-                        "--no_speech_threshold", "0.4",  // Mais sensível a falas sutis
-                        "--logprob_threshold", "-0.8",  // Aceita predições com menor confiança (captura fillers)
-                        "--compression_ratio_threshold", "2.8",  // Permite texto mais verboso
-                        inputFile
-                };
+            for (int batchSize : batchSizes) {
+                try {
+                    String diarizationInfo = enableDiarization ?
+                            String.format(" + diarização (speakers: %d-%d)",
+                                    minSpeakers != null ? minSpeakers : 1,
+                                    maxSpeakers != null ? maxSpeakers : 5) : "";
+                    logger.info(String.format("🎤 Tentando WhisperX com compute_type=%s, batch_size=%d%s...",
+                            computeType, batchSize, diarizationInfo));
+
+                    // Construir comando base
+                    java.util.List<String> commandList = new java.util.ArrayList<>();
+                    commandList.add("whisperx");
+                    commandList.add("--model");
+                    commandList.add(model);
+                    commandList.add("--device");
+                    commandList.add("cuda");
+                    commandList.add("--compute_type");
+                    commandList.add(computeType);  // Usa float16 primeiro, fallback para int8
+                    commandList.add("--batch_size");
+                    commandList.add(String.valueOf(batchSize));
+                    commandList.add("--output_dir");
+                    commandList.add(outputDir);
+                    commandList.add("--output_format");
+                    commandList.add("all");  // Gera VTT + JSON com word timestamps
+                    commandList.add("--initial_prompt");
+                    commandList.add(fillerPrompt);  // Prompt para detectar fillers
+                    commandList.add("--condition_on_previous_text");
+                    commandList.add("False");  // 🔥 Desliga histórico (economiza RAM)
+                    commandList.add("--no_align");  // 🔥 DESLIGA alinhamento (economiza ~2GB VRAM!)// --no_align REMOVIDO: alinhamento ativo = word-level timestamps
+                    commandList.add("--vad_onset");
+                    commandList.add("0.500");  // VAD onset PADRÃO - detecta início de fala
+                    commandList.add("--vad_offset");
+                    commandList.add("0.363");  // VAD offset PADRÃO - detecta fim de fala
+                    commandList.add("--no_speech_threshold");
+                    commandList.add("0.4");  // Mais sensível a falas sutis
+                    commandList.add("--logprob_threshold");
+                    commandList.add("-0.8");  // Aceita predições com menor confiança (captura fillers)
+                    commandList.add("--compression_ratio_threshold");
+                    commandList.add("2.8");  // Permite texto mais verboso
+
+                    // Adicionar parâmetros de diarização se habilitado
+                    if (enableDiarization && hfToken != null) {
+                        commandList.add("--diarize");
+                        commandList.add("--hf_token");
+                        commandList.add(hfToken);
+                        if (minSpeakers != null) {
+                            commandList.add("--min_speakers");
+                            commandList.add(String.valueOf(minSpeakers));
+                        }
+                        if (maxSpeakers != null) {
+                            commandList.add("--max_speakers");
+                            commandList.add(String.valueOf(maxSpeakers));
+                        }
+                    }
+
+                    // Adicionar arquivo de entrada
+                    commandList.add(inputFile);
+
+                    String[] command = commandList.toArray(new String[0]);
 
                 logger.fine("Executando WhisperX: " + String.join(" ", command));
                 ProcessBuilder pb = new ProcessBuilder(command);
@@ -421,7 +519,7 @@ public class Whisper {
                 if (exitCode == 0) {
                     File generatedFile = new File(outputDir, "vocals.vtt");
                     if (generatedFile.exists()) {
-                        logger.info(String.format("✅ WhisperX bem-sucedido com batch_size=%d", batchSize));
+                        logger.info(String.format("✅ WhisperX bem-sucedido com compute_type=%s, batch_size=%d", computeType, batchSize));
 
                         // Backup e rename
                         try {
@@ -435,7 +533,7 @@ public class Whisper {
                         try {
                             Files.move(generatedFile.toPath(), outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
                             logger.fine("✅ Arquivo renomeado para: " + outputFile.getName());
-                            return; // SUCESSO!
+                            return; // SUCESSO TOTAL - sai da função
                         } catch (IOException e) {
                             throw new IOException("Erro ao renomear arquivo: " + e.getMessage());
                         }
@@ -444,10 +542,10 @@ public class Whisper {
 
                 // Se falhou com OOM e ainda tem batch_size menor para tentar
                 if (cudaOOM && batchSize > 1) {
-                    logger.warning(String.format("❌ OOM com batch_size=%d, limpando GPU e tentando menor...", batchSize));
+                    logger.warning(String.format("❌ OOM com compute_type=%s, batch_size=%d, limpando GPU e tentando menor...", computeType, batchSize));
                     ClearMemory.forceCudaCleanup();
                     Thread.sleep(3000); // Aguarda limpeza
-                    lastException = new IOException("CUDA OOM com batch_size=" + batchSize);
+                    lastException = new IOException("CUDA OOM com compute_type=" + computeType + ", batch_size=" + batchSize);
                     continue;
                 }
 
@@ -477,10 +575,12 @@ public class Whisper {
                 // Erro não relacionado a memória ou último batch_size
                 throw e;
             }
-        }
+        } // Fim do loop for (int batchSize : batchSizes)
+
+    } // Fim do loop for (String computeType : computeTypes)
 
         // Se chegou aqui, todas as tentativas falharam
-        throw new IOException("WhisperX falhou com todos batch_sizes testados. Último erro: " +
+        throw new IOException("WhisperX falhou com todos compute_types e batch_sizes testados. Último erro: " +
             (lastException != null ? lastException.getMessage() : "desconhecido"));
     }
 
@@ -795,6 +895,129 @@ public class Whisper {
      * Entrada TSV para consolidação
      */
     private record TSVEntry(long start, long end, String text) {
+    }
+
+    // =========== DIARIZAÇÃO PÓS-TRADUÇÃO ===========
+
+    /**
+     * Adiciona marcadores de diarização ao arquivo traduzido
+     * usando os timestamps do arquivo original com diarização
+     *
+     * @param originalVttWithDiarization Arquivo VTT original em inglês com marcadores [SPEAKER_XX]
+     * @param translatedVttPath Arquivo VTT traduzido sem marcadores de speaker
+     * @throws IOException Se houver erro de leitura/escrita
+     */
+    public static void addDiarizationToTranslatedVtt(String originalVttWithDiarization, String translatedVttPath) throws IOException {
+        logger.info("👥 Adicionando marcadores de diarização ao arquivo traduzido...");
+
+        // 1. Ler o VTT original e extrair mapeamento timestamp -> speaker
+        Map<String, String> timestampToSpeaker = new HashMap<>();
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(originalVttWithDiarization, StandardCharsets.UTF_8))) {
+            String line;
+            String currentTimestamp = null;
+
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+
+                // Detectar linha de timestamp
+                if (line.contains("-->")) {
+                    currentTimestamp = normalizeTimestamp(line);
+                }
+                // Detectar linha com speaker
+                else if (currentTimestamp != null && line.startsWith("[SPEAKER_")) {
+                    // Extrair o marcador de speaker: [SPEAKER_00] ou [SPEAKER_01]
+                    int endBracket = line.indexOf("]");
+                    if (endBracket > 0) {
+                        String speaker = line.substring(0, endBracket + 1); // "[SPEAKER_XX]"
+                        timestampToSpeaker.put(currentTimestamp, speaker);
+                        currentTimestamp = null;
+                    }
+                }
+            }
+        }
+
+        logger.info("📋 Mapeados " + timestampToSpeaker.size() + " timestamps com speakers");
+
+        // 2. Ler o VTT traduzido e adicionar marcadores de speaker
+        List<String> outputLines = new ArrayList<>();
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(translatedVttPath, StandardCharsets.UTF_8))) {
+            String line;
+            String currentTimestamp = null;
+            boolean nextLineIsText = false;
+
+            while ((line = reader.readLine()) != null) {
+                // Detectar linha de timestamp
+                if (line.trim().contains("-->")) {
+                    outputLines.add(line);
+                    currentTimestamp = normalizeTimestamp(line.trim());
+                    nextLineIsText = true;
+                }
+                // Adicionar speaker se for a linha de texto e tivermos o speaker mapeado
+                else if (nextLineIsText && !line.trim().isEmpty()) {
+                    String speaker = timestampToSpeaker.get(currentTimestamp);
+                    if (speaker != null) {
+                        // Adicionar speaker antes do texto se ainda não tiver
+                        if (!line.trim().startsWith("[SPEAKER_")) {
+                            outputLines.add(speaker + ": " + line);
+                        } else {
+                            outputLines.add(line);
+                        }
+                    } else {
+                        outputLines.add(line);
+                    }
+                    nextLineIsText = false;
+                    currentTimestamp = null;
+                }
+                // Outras linhas (WEBVTT, linhas vazias, etc)
+                else {
+                    outputLines.add(line);
+                    if (!line.trim().isEmpty()) {
+                        nextLineIsText = false;
+                    }
+                }
+            }
+        }
+
+        // 3. Salvar o arquivo atualizado
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(translatedVttPath, StandardCharsets.UTF_8))) {
+            for (String line : outputLines) {
+                writer.write(line);
+                writer.newLine();
+            }
+        }
+
+        logger.info("✅ Diarização adicionada com sucesso ao arquivo traduzido!");
+    }
+
+    /**
+     * Normaliza timestamp VTT para formato consistente (remove espaços, normaliza separadores)
+     * Exemplos:
+     * "00:42.016 --> 01:07.936" -> "00:42.016-->01:07.936"
+     * "00:00:42.016 --> 00:01:07.936" -> "00:42.016-->01:07.936"
+     */
+    private static String normalizeTimestamp(String timestamp) {
+        // Remove espaços
+        String normalized = timestamp.replaceAll("\\s+", "");
+
+        // Converter HH:MM:SS.mmm para MM:SS.mmm (remover hora se for 00)
+        Pattern hhmmss = Pattern.compile("(\\d{2}):(\\d{2}):(\\d{2})[.,](\\d{3})-->(\\d{2}):(\\d{2}):(\\d{2})[.,](\\d{3})");
+        Matcher m = hhmmss.matcher(normalized);
+        if (m.matches()) {
+            // Formato: HH:MM:SS.mmm --> HH:MM:SS.mmm
+            String h1 = m.group(1), min1 = m.group(2), sec1 = m.group(3), ms1 = m.group(4);
+            String h2 = m.group(5), min2 = m.group(6), sec2 = m.group(7), ms2 = m.group(8);
+
+            // Converter para MM:SS.mmm (removendo hora)
+            int totalMin1 = Integer.parseInt(h1) * 60 + Integer.parseInt(min1);
+            int totalMin2 = Integer.parseInt(h2) * 60 + Integer.parseInt(min2);
+
+            return String.format("%02d:%s.%s-->%02d:%s.%s", totalMin1, sec1, ms1, totalMin2, sec2, ms2);
+        }
+
+        // Já está em MM:SS.mmm, apenas normalizar separadores
+        return normalized.replace(",", ".");
     }
 
     // =========== SHUTDOWN ===========

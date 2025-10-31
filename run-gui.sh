@@ -34,8 +34,9 @@ echo "   - Timestamps precisos para dublagem natural"
 echo "   - Suporte completo: Java, Spring, React, Next.js, TypeScript, n8n, MCP, IA"
 echo ""
 
-# Compilar e executar a interface gráfica
-mvn compile -q && java -cp "target/classes:target/dependency/*" org.DubAIGUI
+# Compilar e executar a interface gráfica usando Maven exec
+echo "🚀 Iniciando DubAI..."
+mvn compile exec:java -Dexec.mainClass="org.DubAIGUI" -q
 
 echo ""
 echo "🎉 DubAI finalizado!"

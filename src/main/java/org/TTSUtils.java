@@ -95,8 +95,12 @@ public class TTSUtils {
 
     // Configuração do engine TTS
     private static boolean useKokoroTTS = false;
+    private static boolean useAutomaticVoiceSelection = false; // Modo automático (Kokoro Multi-Voz)
     private static KokoroTTS.VozPTBR kokoroVoice = KokoroTTS.VozPTBR.HEART_FEMININO;
     private static KokoroTTS.VozPTBR[] kokoroVoiceCombination = null; // Null = modo de voz única
+
+    // Mapeamento de vozes automático (speaker -> vozes)
+    private static Map<String, AutomaticVoiceSelector.VoiceConfig> automaticVoiceAssignments = null;
 
     private static AudioFormat cachedPiperFormat = null;
     private static final Object formatLock = new Object();
@@ -522,6 +526,7 @@ public class TTSUtils {
         final String originalText;
         String cleanText; // Permitir modificação para simplificação
         final int index;
+        final String speakerId; // Speaker ID extraído do originalText
 
         final String rawAudioFile;
         final String finalAudioFile;
@@ -548,6 +553,10 @@ public class TTSUtils {
             this.originalText = originalText;
             this.cleanText = cleanText;
             this.index = index;
+
+            // Extrair e guardar o speaker ID ANTES de qualquer normalização
+            this.speakerId = AutomaticVoiceSelector.extractSpeakerFromText(originalText);
+
             this.rawAudioFile = String.format("audio_raw_%03d.wav", index);
             this.finalAudioFile = String.format("audio_%03d.wav", index);
 
@@ -735,6 +744,17 @@ public class TTSUtils {
     }
 
     /**
+     * Método helper para escrever logs tanto no console quanto no arquivo
+     */
+    private static void logBoth(String message) {
+        logger.info(message);
+        if (optimizedLogWriter != null) {
+            optimizedLogWriter.println("[" + java.time.LocalTime.now() + "] " + message);
+            optimizedLogWriter.flush();
+        }
+    }
+
+    /**
      * MÉTODO PRINCIPAL OTIMIZADO
      */
     public static void processVttFile(String inputFile) throws IOException, InterruptedException {
@@ -756,6 +776,30 @@ public class TTSUtils {
         try {
             prepareDirectories();
             validatePiperSetup();
+
+            // 🤖 Inicializar modo automático de vozes se ativado
+            logBoth(String.format("🔍 DEBUG: useAutomaticVoiceSelection=%s, automaticVoiceAssignments=%s",
+                useAutomaticVoiceSelection, automaticVoiceAssignments == null ? "null" : "SET"));
+
+            if (useAutomaticVoiceSelection && automaticVoiceAssignments == null) {
+                logBoth("🤖 Inicializando seleção automática de vozes...");
+                String vocalsWav = "output/vocals.wav";
+                String transcriptionVtt = inputFile;
+
+                logBoth(String.format("📁 Verificando vocals.wav: %s (existe: %s)",
+                    vocalsWav, java.nio.file.Files.exists(java.nio.file.Paths.get(vocalsWav))));
+
+                try {
+                    automaticVoiceAssignments = AutomaticVoiceSelector.selectVoices(vocalsWav, transcriptionVtt);
+                    logBoth("✅ " + automaticVoiceAssignments.size() + " speakers configurados com vozes automáticas");
+                } catch (Exception e) {
+                    logBoth("⚠️ Erro na seleção automática, usando voz padrão: " + e.getMessage());
+                    e.printStackTrace();
+                    useAutomaticVoiceSelection = false;
+                }
+            } else {
+                logBoth("⏭️ Pulando seleção automática - condição não satisfeita");
+            }
 
             double targetDuration = detectOriginalAudioDuration(inputFile);
             logger.info(String.format("🎯 Duração alvo: %.3fs", targetDuration));
@@ -1564,19 +1608,21 @@ public class TTSUtils {
             // ======================================================================
             if (useKokoroTTS) {
                 logger.info("... gerando áudio natural com Kokoro...");
-                if (kokoroVoiceCombination != null && kokoroVoiceCombination.length >= 2) {
+                KokoroTTS.VozPTBR[] voicesToUse = getVoiceForSegment(segment);
+
+                if (voicesToUse.length >= 2) {
                     KokoroTTS.generateAudioWithCombinedVoices(
                             segment.cleanText,
                             naturalAudioFile,
                             naturalScale,
-                            kokoroVoiceCombination
+                            voicesToUse
                     );
                 } else {
                     KokoroTTS.generateAudio(
                             segment.cleanText,
                             naturalAudioFile,
                             naturalScale,
-                            kokoroVoice
+                            voicesToUse[0]
                     );
                 }
             } else {
@@ -1707,17 +1753,22 @@ public class TTSUtils {
                 while (retryCount < maxRetries && !kokoroSuccess) {
                     try {
                         if (KokoroTTS.isAvailable()) {
+                            KokoroTTS.VozPTBR[] voicesToUse = getVoiceForSegment(segment);
+
+                            String voiceDesc = voicesToUse.length == 1 ? voicesToUse[0].getDisplayName() :
+                                String.join("+", java.util.Arrays.stream(voicesToUse).map(v -> v.getCode()).toArray(String[]::new));
+
                             logger.info(String.format("🚀 Tentativa Kokoro %d/%d: voz=%s, lengthScale=%.3f",
-                                    retryCount + 1, maxRetries, kokoroVoice.getDisplayName(), segment.currentLengthScale));
+                                    retryCount + 1, maxRetries, voiceDesc, segment.currentLengthScale));
                             logger.fine(String.format("📝 Texto: '%s'", segment.cleanText));
 
-                            if (kokoroVoiceCombination != null && kokoroVoiceCombination.length >= 2) {
+                            if (voicesToUse.length >= 2) {
                                 // Modo de combinação de vozes
                                 KokoroTTS.generateAudioWithCombinedVoices(
                                         segment.cleanText,
                                         outputFile,
                                         segment.currentLengthScale,
-                                        kokoroVoiceCombination
+                                        voicesToUse
                                 );
                             } else {
                                 // Modo de voz única
@@ -1725,7 +1776,7 @@ public class TTSUtils {
                                         segment.cleanText,
                                         outputFile,
                                         segment.currentLengthScale,
-                                        kokoroVoice
+                                        voicesToUse[0]
                                 );
                             }
 
@@ -2078,10 +2129,12 @@ public class TTSUtils {
                 // ======================================================================
                 if (useKokoroTTS) {
                     logger.info("... forçando geração com Kokoro...");
-                    if (kokoroVoiceCombination != null && kokoroVoiceCombination.length >= 2) {
-                        KokoroTTS.generateAudioWithCombinedVoices(segment.cleanText, outputFile, emergencyScale, kokoroVoiceCombination);
+                    KokoroTTS.VozPTBR[] voicesToUse = getVoiceForSegment(segment);
+
+                    if (voicesToUse.length >= 2) {
+                        KokoroTTS.generateAudioWithCombinedVoices(segment.cleanText, outputFile, emergencyScale, voicesToUse);
                     } else {
-                        KokoroTTS.generateAudio(segment.cleanText, outputFile, emergencyScale, kokoroVoice);
+                        KokoroTTS.generateAudio(segment.cleanText, outputFile, emergencyScale, voicesToUse[0]);
                     }
                 } else {
                     logger.info("... forçando geração com Piper...");
@@ -3046,6 +3099,7 @@ public class TTSUtils {
      */
     public static void setUseKokoroTTS(boolean useKokoro) {
         useKokoroTTS = useKokoro;
+        useAutomaticVoiceSelection = false; // Desabilitar modo automático
         logger.info(useKokoro ? "🚀 Kokoro TTS ATIVADO (GPU)" : "💻 Piper TTS ATIVADO (CPU)");
     }
 
@@ -3055,6 +3109,7 @@ public class TTSUtils {
     public static void setKokoroVoice(KokoroTTS.VozPTBR voice) {
         kokoroVoice = voice;
         kokoroVoiceCombination = null; // Desabilitar modo de combinação
+        useAutomaticVoiceSelection = false; // Desabilitar modo automático
         logger.info("🎤 Voz Kokoro selecionada: " + voice.getDisplayName());
     }
 
@@ -3066,10 +3121,73 @@ public class TTSUtils {
             throw new IllegalArgumentException("É necessário pelo menos 2 vozes para combinar");
         }
         kokoroVoiceCombination = voices;
+        useAutomaticVoiceSelection = false; // Desabilitar modo automático
         logger.info("🎭 Vozes Kokoro combinadas: " + String.join(" + ",
             java.util.Arrays.stream(voices)
                 .map(KokoroTTS.VozPTBR::getDisplayName)
                 .toArray(String[]::new)));
+    }
+
+    /**
+     * Ativa o modo automático de seleção de vozes (Kokoro Multi-Voz)
+     * Detecta gênero dos speakers e atribui vozes automaticamente
+     */
+    public static void setAutomaticVoiceSelection(boolean enable) {
+        useAutomaticVoiceSelection = enable;
+        if (enable) {
+            useKokoroTTS = true; // Força uso do Kokoro
+            kokoroVoiceCombination = null; // Limpa combinação manual
+            automaticVoiceAssignments = null; // Será inicializado ao processar
+            logger.info("🤖 Modo Automático ATIVADO - Kokoro Multi-Voz com detecção de gênero");
+        } else {
+            automaticVoiceAssignments = null;
+            logger.info("🤖 Modo Automático DESATIVADO");
+        }
+    }
+
+    /**
+     * Reseta as atribuições de voz automáticas
+     * Deve ser chamado ANTES de processar cada novo vídeo
+     */
+    public static void resetAutomaticVoiceAssignments() {
+        automaticVoiceAssignments = null;
+        logger.info("🔄 Atribuições de voz resetadas - próximo vídeo terá nova análise");
+    }
+
+    /**
+     * Obtém a voz Kokoro apropriada para o texto
+     * Se modo automático estiver ativo, extrai o speaker e retorna a voz atribuída
+     * Caso contrário, retorna a voz/combinação configurada manualmente
+     */
+    private static KokoroTTS.VozPTBR[] getVoiceForSegment(OptimizedSegment segment) {
+        // Modo automático: usar speaker ID salvo no segmento
+        if (useAutomaticVoiceSelection && automaticVoiceAssignments != null) {
+            String speakerId = segment.speakerId;
+
+            // Log detalhado para debug
+            logBoth(String.format("🔍 Segmento %03d: Speaker=%s | Texto: '%s'",
+                segment.index,
+                speakerId != null ? speakerId : "NENHUM",
+                segment.originalText.length() > 60 ? segment.originalText.substring(0, 60) + "..." : segment.originalText));
+
+            if (speakerId != null) {
+                KokoroTTS.VozPTBR[] voices = AutomaticVoiceSelector.getVoiceForSpeaker(speakerId, automaticVoiceAssignments);
+                logBoth(String.format("🎤 %s → %s", speakerId,
+                    voices.length == 1 ? voices[0].getDisplayName() :
+                    String.join("+", java.util.Arrays.stream(voices).map(v -> v.getCode()).toArray(String[]::new))));
+                return voices;
+            } else {
+                logBoth("⚠️ Nenhum speaker encontrado no segmento, usando voz padrão");
+            }
+        }
+
+        // Modo manual: usar voz/combinação configurada
+        if (kokoroVoiceCombination != null && kokoroVoiceCombination.length >= 2) {
+            return kokoroVoiceCombination;
+        }
+
+        // Voz única
+        return new KokoroTTS.VozPTBR[]{kokoroVoice};
     }
 
     /**
@@ -3363,6 +3481,9 @@ public class TTSUtils {
         if (text == null || text.trim().isEmpty()) return "";
 
         String normalized = text;
+
+        // Remover marcadores de diarização [SPEAKER_XX]: antes de processar
+        normalized = normalized.replaceAll("\\[SPEAKER_\\d+\\]:\\s*", "");
 
         // Remover APENAS elementos claramente não falados - PRESERVAR conteúdo técnico
         normalized = normalized.replaceAll("\\[music\\]", "");           // Remove [music]
@@ -3763,8 +3884,9 @@ public class TTSUtils {
         ffmpegCmd.add(accompanimentFile.toString()); // Accompaniment (música de fundo)
         
         // Filtro para mixar: áudio dublado + accompaniment tratado com EQ suave
+        // Volume aumentado em 35% (1.0 → 1.35 para voz, 0.6 → 0.81 para background)
         ffmpegCmd.add("-filter_complex");
-        ffmpegCmd.add("[0:a]volume=1.0[voice];[1:a]volume=0.6,lowpass=f=8000,highpass=f=80[bg];[voice][bg]amix=inputs=2:duration=first:dropout_transition=2[out]");
+        ffmpegCmd.add("[0:a]volume=1.35[voice];[1:a]volume=0.81,lowpass=f=8000,highpass=f=80[bg];[voice][bg]amix=inputs=2:duration=first:dropout_transition=2[out]");
         ffmpegCmd.add("-map");
         ffmpegCmd.add("[out]");
         ffmpegCmd.add("-c:a");

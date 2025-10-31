@@ -156,6 +156,9 @@ public class KokoroTTS {
         try {
             long startTime = System.nanoTime();
 
+            // Remover marcadores de diarização [SPEAKER_XX]: antes de sintetizar
+            text = text.replaceAll("\\[SPEAKER_\\d+\\]:\\s*", "");
+
             // Converter lengthScale do Piper para speed do Kokoro (inverso)
             // Piper: lengthScale < 1.0 = mais rápido | lengthScale > 1.0 = mais lento
             // Kokoro: speed > 1.0 = mais rápido | speed < 1.0 = mais lento

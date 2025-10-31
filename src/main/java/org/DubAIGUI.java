@@ -67,6 +67,8 @@ public class DubAIGUI extends JFrame {
     private JLabel googleApiKeyLabel;
     private JTextField deepseekApiKeyField;
     private JLabel deepseekApiKeyLabel;
+    private JTextField hfTokenField;
+    private JLabel hfTokenLabel;
     private JCheckBox mixBackgroundAudioCheckBox;
 
     // Componentes TTS
@@ -265,16 +267,40 @@ public class DubAIGUI extends JFrame {
 
         configContentPanel.add(deepseekKeyPanel, gbc);
 
-        // Seção: Text-to-Speech
+        // Seção: HuggingFace Token (para diarização)
         gbc.gridy = 6; gbc.gridwidth = 2; gbc.weightx = 0.0;
+        hfTokenLabel = new JLabel("🤗 HuggingFace Token (para diarização):");
+        hfTokenLabel.setFont(new Font("Arial", Font.BOLD, 13));
+        configContentPanel.add(hfTokenLabel, gbc);
+
+        gbc.gridy = 7; gbc.gridwidth = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
+        JPanel hfTokenPanel = new JPanel(new BorderLayout(5, 0));
+        hfTokenField = new JPasswordField();
+        hfTokenField.setPreferredSize(new Dimension(0, 28));
+        hfTokenField.setFont(new Font("Monospaced", Font.PLAIN, 12));
+        hfTokenPanel.add(hfTokenField, BorderLayout.CENTER);
+
+        JButton saveHfTokenButton = new JButton("💾 Salvar");
+        saveHfTokenButton.setPreferredSize(new Dimension(100, 28));
+        saveHfTokenButton.setBackground(SECONDARY_COLOR);
+        saveHfTokenButton.setForeground(Color.WHITE);
+        saveHfTokenButton.setFocusPainted(false);
+        saveHfTokenButton.addActionListener(e -> saveHuggingFaceToken());
+        hfTokenPanel.add(saveHfTokenButton, BorderLayout.EAST);
+
+        configContentPanel.add(hfTokenPanel, gbc);
+
+        // Seção: Text-to-Speech
+        gbc.gridy = 8; gbc.gridwidth = 2; gbc.weightx = 0.0;
         JLabel ttsLabel = new JLabel("🗣️ Motor de Text-to-Speech:");
         ttsLabel.setFont(new Font("Arial", Font.BOLD, 13));
         configContentPanel.add(ttsLabel, gbc);
 
-        gbc.gridy = 7; gbc.gridwidth = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
+        gbc.gridy = 9; gbc.gridwidth = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
         ttsEngineComboBox = new JComboBox<>(new String[]{
             "Piper TTS (CPU - Estável)",
-            "Kokoro TTS (GPU - 6.7x Mais Rápido)"
+            "Kokoro TTS (GPU - 6.7x Mais Rápido)",
+            "Automático (Kokoro Multi-Voz)"
         });
         ttsEngineComboBox.setSelectedIndex(0); // Piper como padrão
         ttsEngineComboBox.setPreferredSize(new Dimension(0, 28));
@@ -282,13 +308,13 @@ public class DubAIGUI extends JFrame {
         configContentPanel.add(ttsEngineComboBox, gbc);
 
         // Seção: Voz Kokoro (inicialmente oculta)
-        gbc.gridy = 8; gbc.gridwidth = 2; gbc.weightx = 0.0;
+        gbc.gridy = 10; gbc.gridwidth = 2; gbc.weightx = 0.0;
         kokoroVoiceLabel = new JLabel("🎤 Voz Kokoro:");
         kokoroVoiceLabel.setFont(new Font("Arial", Font.BOLD, 13));
         kokoroVoiceLabel.setVisible(false);
         configContentPanel.add(kokoroVoiceLabel, gbc);
 
-        gbc.gridy = 9; gbc.gridwidth = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
+        gbc.gridy = 11; gbc.gridwidth = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
         String[] kokoroVoices = new String[KokoroTTS.VozPTBR.values().length];
         for (int i = 0; i < KokoroTTS.VozPTBR.values().length; i++) {
             kokoroVoices[i] = KokoroTTS.VozPTBR.values()[i].getDisplayName();
@@ -604,9 +630,17 @@ public class DubAIGUI extends JFrame {
         // Configurar engine TTS
         int ttsEngineIndex = ttsEngineComboBox.getSelectedIndex();
         boolean useKokoro = (ttsEngineIndex == 1);
-        TTSUtils.setUseKokoroTTS(useKokoro);
+        boolean useAutomatic = (ttsEngineIndex == 2);
 
-        if (useKokoro) {
+        if (useAutomatic) {
+            // Modo automático: Kokoro Multi-Voz com detecção de gênero
+            TTSUtils.setAutomaticVoiceSelection(true);
+            logMessage("🤖 Modo Automático ativado - vozes serão selecionadas por speaker/gênero");
+        } else {
+            TTSUtils.setUseKokoroTTS(useKokoro);
+        }
+
+        if (useKokoro && !useAutomatic) {
             // Verificar se está em modo de combinação de vozes
             boolean combineMode = kokoroCombineVoicesCheckBox.isSelected();
 
@@ -883,6 +917,10 @@ public class DubAIGUI extends JFrame {
                 return; // Pula todo o processamento
             }
 
+            // 🔄 Resetar atribuições de voz automáticas ANTES de processar cada vídeo
+            // Isso garante que cada vídeo terá sua própria análise de gênero
+            TTSUtils.resetAutomaticVoiceAssignments();
+
             prepareOutputDirectory();
 
             String outputDir = new File("output").getAbsolutePath();
@@ -927,8 +965,9 @@ public class DubAIGUI extends JFrame {
             vttPath = transcribeAudio(vocalsPath, outputDir);
 
             // Limpeza LEVE após Whisper - SEM matar processos CUDA
-            deleteFileIfExists(vocalsPath);
-            vocalsPath = null;
+            // NÃO deletar vocals.wav - necessário para detecção de gênero no TTS
+            // deleteFileIfExists(vocalsPath);
+            // vocalsPath = null;
             try {
                 Thread.sleep(1000);
                 org.ClearMemory.cleanAIModelCaches(); // Só limpa /tmp, não mata processos
@@ -1012,7 +1051,8 @@ public class DubAIGUI extends JFrame {
             try {
                 logMessage("🧹 Limpeza agressiva de arquivos temporários...");
                 deleteFileIfExists(audioPath);
-                deleteFileIfExists(vocalsPath);
+                // NÃO deletar vocals.wav - necessário para detecção de gênero
+                // deleteFileIfExists(vocalsPath);
                 deleteFileIfExists(vttPath);
                 deleteFileIfExists(translatedVttPath);
                 deleteFileIfExists(dubedAudioPath);
@@ -1433,24 +1473,30 @@ public class DubAIGUI extends JFrame {
     private void onTTSEngineChanged() {
         int selectedIndex = ttsEngineComboBox.getSelectedIndex();
         boolean isKokoro = (selectedIndex == 1);
+        boolean isAutomatic = (selectedIndex == 2);
 
-        // Mostrar/ocultar seleção de voz Kokoro
+        // Mostrar/ocultar seleção de voz Kokoro (apenas para modo manual)
         kokoroVoiceLabel.setVisible(isKokoro);
         kokoroVoiceComboBox.setVisible(isKokoro);
         kokoroCombineVoicesCheckBox.setVisible(isKokoro);
 
-        // Ocultar opções de combinação se não for Kokoro
-        if (!isKokoro) {
+        // Ocultar opções de combinação se não for Kokoro ou Automático
+        if (!isKokoro && !isAutomatic) {
             kokoroCombineLabel.setVisible(false);
             kokoroVoiceScrollPane.setVisible(false);
             kokoroCombineVoicesCheckBox.setSelected(false);
         }
 
-        // Verificar se Kokoro está disponível
-        if (isKokoro) {
+        // Verificar disponibilidade do Kokoro
+        if (isKokoro || isAutomatic) {
             if (KokoroTTS.isAvailable()) {
-                logMessage("✅ Kokoro TTS selecionado e disponível (http://localhost:8880)");
-                logMessage("   💡 21 vozes disponíveis + opção de combinar vozes");
+                if (isAutomatic) {
+                    logMessage("🤖 Modo Automático selecionado - Kokoro Multi-Voz");
+                    logMessage("   👥 Vozes serão selecionadas automaticamente por speaker/gênero");
+                } else {
+                    logMessage("✅ Kokoro TTS selecionado e disponível (http://localhost:8880)");
+                    logMessage("   💡 21 vozes disponíveis + opção de combinar vozes");
+                }
             } else {
                 logMessage("⚠️ Kokoro TTS selecionado mas não está rodando!");
                 logMessage("   Execute: cd kokoro-install && docker compose up -d");
@@ -1833,6 +1879,7 @@ public class DubAIGUI extends JFrame {
                     String password = new String(passwordField.getPassword());
                     String googleKey = ApiKeyManager.loadApiKey(password);
                     String deepseekKey = ApiKeyManager.loadDeepSeekApiKey(password);
+                    String hfToken = ApiKeyManager.loadHuggingFaceToken(password);
 
                     boolean loaded = false;
                     if (googleKey != null && !googleKey.isEmpty()) {
@@ -1843,6 +1890,12 @@ public class DubAIGUI extends JFrame {
                     if (deepseekKey != null && !deepseekKey.isEmpty()) {
                         deepseekApiKeyField.setText(deepseekKey);
                         Translation.setDeepSeekApiKey(deepseekKey);
+                        loaded = true;
+                    }
+                    if (hfToken != null && !hfToken.isEmpty()) {
+                        hfTokenField.setText(hfToken);
+                        Whisper.setHuggingFaceToken(hfToken);
+                        logMessage("👥 HuggingFace Token carregado - diarização disponível");
                         loaded = true;
                     }
 
@@ -2034,6 +2087,89 @@ public class DubAIGUI extends JFrame {
     }
 
     /**
+     * Salva o HuggingFace Token de forma criptografada
+     */
+    private void saveHuggingFaceToken() {
+        try {
+            String hfToken = hfTokenField.getText().trim();
+
+            if (hfToken.isEmpty()) {
+                JOptionPane.showMessageDialog(
+                    this,
+                    "Por favor, insira um HuggingFace Token válido",
+                    "Aviso",
+                    JOptionPane.WARNING_MESSAGE
+                );
+                return;
+            }
+
+            // Solicitar senha para criptografar
+            JPasswordField passwordField = new JPasswordField();
+            JPasswordField confirmPasswordField = new JPasswordField();
+
+            JPanel panel = new JPanel(new GridLayout(2, 2, 5, 5));
+            panel.add(new JLabel("Senha:"));
+            panel.add(passwordField);
+            panel.add(new JLabel("Confirmar senha:"));
+            panel.add(confirmPasswordField);
+
+            int option = JOptionPane.showConfirmDialog(
+                this,
+                panel,
+                "🔐 Crie uma senha para proteger seu HuggingFace Token",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+            );
+
+            if (option == JOptionPane.OK_OPTION) {
+                String password = new String(passwordField.getPassword());
+                String confirmPassword = new String(confirmPasswordField.getPassword());
+
+                if (password.isEmpty()) {
+                    JOptionPane.showMessageDialog(
+                        this,
+                        "A senha não pode estar vazia",
+                        "Erro",
+                        JOptionPane.ERROR_MESSAGE
+                    );
+                    return;
+                }
+
+                if (!password.equals(confirmPassword)) {
+                    JOptionPane.showMessageDialog(
+                        this,
+                        "As senhas não coincidem",
+                        "Erro",
+                        JOptionPane.ERROR_MESSAGE
+                    );
+                    return;
+                }
+
+                // Salvar criptografado
+                ApiKeyManager.saveHuggingFaceToken(password, hfToken);
+                Whisper.setHuggingFaceToken(hfToken);
+
+                logMessage("✅ HuggingFace Token salvo com sucesso! (criptografado em .api_keys.enc)");
+                logMessage("👥 Diarização agora disponível para transcrições WhisperX");
+                JOptionPane.showMessageDialog(
+                    this,
+                    "HuggingFace Token salvo e criptografado com sucesso!\nMantenha sua senha em local seguro.",
+                    "Sucesso",
+                    JOptionPane.INFORMATION_MESSAGE
+                );
+            }
+        } catch (Exception e) {
+            logMessage("❌ Erro ao salvar HuggingFace Token: " + e.getMessage());
+            JOptionPane.showMessageDialog(
+                this,
+                "Erro ao salvar HuggingFace Token: " + e.getMessage(),
+                "Erro",
+                JOptionPane.ERROR_MESSAGE
+            );
+        }
+    }
+
+    /**
      * Deleta arquivo se existir, silenciosamente ignora erros
      */
     private void deleteFileIfExists(String filePath) {
@@ -2068,15 +2204,16 @@ public class DubAIGUI extends JFrame {
                 if (file.isFile()) {
                     String name = file.getName().toLowerCase();
                     // Deletar arquivos temporários mas manter vídeos finais _dubbed.{extensão}
+                    // NÃO deletar vocals.wav - necessário para detecção de gênero
                     if (name.equals("audio.wav") ||
-                        name.equals("vocals.wav") ||
-                        name.equals("accompaniment.wav") ||
+                        // name.equals("vocals.wav") ||  // MANTIDO para análise de gênero automática
+                        //name.equals("accompaniment.wav") ||
                         name.equals("output.wav") ||
-                        name.equals("transcription.vtt") ||
+                        //name.equals("transcription.vtt") ||
                         name.equals("transcription_translated.vtt") ||
-                        name.equals("vocals.tsv") ||
-                        name.equals("vocals.json") ||
-                        name.equals("whisperx_temp.vtt") ||
+                        //name.equals("vocals.tsv") ||
+                        //name.equals("vocals.json") ||
+                        //name.equals("whisperx_temp.vtt") ||
                         name.startsWith("chunk_") ||
                         name.contains("_backup")) {
                         try {

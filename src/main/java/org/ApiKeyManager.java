@@ -20,6 +20,7 @@ public class ApiKeyManager {
     private static final String ALGORITHM = "AES";
     private static final String GEMINI_KEY = "google.gemini.api.key";
     private static final String DEEPSEEK_KEY = "deepseek.api.key";
+    private static final String HF_TOKEN_KEY = "huggingface.token";
 
     /**
      * Salva as API keys de forma criptografada
@@ -71,6 +72,46 @@ public class ApiKeyManager {
     public static String loadDeepSeekApiKey(String password) throws Exception {
         Properties props = loadAllApiKeys(password);
         return props != null ? props.getProperty(DEEPSEEK_KEY) : null;
+    }
+
+    /**
+     * Salva o HuggingFace Token de forma criptografada
+     */
+    public static void saveHuggingFaceToken(String password, String hfToken) throws Exception {
+        Properties props = loadAllApiKeys(password);
+        if (props == null) {
+            props = new Properties();
+        }
+
+        if (hfToken != null && !hfToken.isEmpty()) {
+            props.setProperty(HF_TOKEN_KEY, hfToken);
+        } else {
+            props.remove(HF_TOKEN_KEY);
+        }
+
+        // Serializar properties
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        props.store(baos, "DubAI API Keys");
+        byte[] plaintext = baos.toByteArray();
+
+        // Criptografar
+        SecretKey key = generateKey(password);
+        Cipher cipher = Cipher.getInstance(ALGORITHM);
+        cipher.init(Cipher.ENCRYPT_MODE, key);
+        byte[] encrypted = cipher.doFinal(plaintext);
+
+        // Salvar arquivo criptografado
+        try (FileOutputStream fos = new FileOutputStream(KEY_FILE)) {
+            fos.write(Base64.getEncoder().encode(encrypted));
+        }
+    }
+
+    /**
+     * Carrega o HuggingFace Token descriptografado
+     */
+    public static String loadHuggingFaceToken(String password) throws Exception {
+        Properties props = loadAllApiKeys(password);
+        return props != null ? props.getProperty(HF_TOKEN_KEY) : null;
     }
 
     /**

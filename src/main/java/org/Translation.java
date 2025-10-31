@@ -196,6 +196,20 @@ public class Translation {
         saveAsVTT(timestampValidated, outputVttPath);
         Files.deleteIfExists(Paths.get(tempOutputPath));
 
+        // 7. 👥 Adicionar marcadores de diarização do arquivo original
+        try {
+            String originalVttWithDiarization = new File(outputVttPath).getParent() + "/temp_vocals.vtt";
+            if (Files.exists(Paths.get(originalVttWithDiarization))) {
+                Whisper.addDiarizationToTranslatedVtt(originalVttWithDiarization, outputVttPath);
+                logger.info("👥 Marcadores de diarização adicionados ao arquivo traduzido");
+            } else {
+                logger.info("ℹ️ Arquivo temp_vocals.vtt não encontrado, pulando diarização");
+            }
+        } catch (Exception e) {
+            logger.warning("⚠️ Erro ao adicionar diarização: " + e.getMessage());
+            // Não lança exceção, a tradução já está completa
+        }
+
         logger.info("✅ Tradução concluída com validação completa: " + outputVttPath);
     }
 
