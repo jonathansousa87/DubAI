@@ -1,0 +1,21 @@
+services:
+  whisperx:
+    build: .
+    container_name: whisperx-container
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - TRANSFORMERS_CACHE=/tmp/transformers_cache
+      - HF_HOME=/tmp/hf_home
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - /tmp:/tmp
+      - whisperx_cache:/tmp/transformers_cache
+      - whisperx_hf:/tmp/hf_home
+    stdin_open: true
+    tty: true
+
+volumes:
+  whisperx_cache:
+  whisperx_hf:

@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  spleeter:
+    build: .
+    container_name: spleeter-container
+    restart: unless-stopped
+    volumes:
+      - /tmp:/tmp
+    environment:
+      - PYTHONUNBUFFERED=1
+    stdin_open: true
+    tty: true
